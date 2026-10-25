@@ -14,8 +14,8 @@ every rule is enforced on the server.
 ![Express 5](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![Angular 22](https://img.shields.io/badge/Angular-22-DD0031?logo=angular&logoColor=white)
 ![MongoDB 8.2](https://img.shields.io/badge/MongoDB-8.2-47A248?logo=mongodb&logoColor=white)
-![Back-end tests](https://img.shields.io/badge/back--end%20tests-319%20passing-2ea44f)
-![Coverage](https://img.shields.io/badge/coverage-98%25%20statements-2ea44f)
+![Back-end tests](https://img.shields.io/badge/back--end%20tests-350%20passing-2ea44f)
+![Coverage](https://img.shields.io/badge/coverage-97%25%20statements-2ea44f)
 
 | Applicant: uploads, with a rejected file | Admin: review, merit score and eligibility |
 |---|---|
@@ -28,18 +28,19 @@ every rule is enforced on the server.
 1. [What it does](#what-it-does)
 2. [Quick start](#quick-start)
 3. [Full setup](#full-setup)
-4. [Walkthrough with screenshots](#walkthrough-with-screenshots)
-5. [Architecture](#architecture)
-6. [Data model](#data-model)
-7. [Business rules](#business-rules)
-8. [API reference](#api-reference)
-9. [Security](#security)
-10. [Testing](#testing)
-11. [Project structure](#project-structure)
-12. [Design decisions](#design-decisions)
-13. [Troubleshooting and FAQ](#troubleshooting-and-faq)
-14. [Known limitations and what I'd improve](#known-limitations-and-what-id-improve)
-15. [Further documentation](#further-documentation)
+4. [Deploying to Vercel](#deploying-to-vercel)
+5. [Walkthrough with screenshots](#walkthrough-with-screenshots)
+6. [Architecture](#architecture)
+7. [Data model](#data-model)
+8. [Business rules](#business-rules)
+9. [API reference](#api-reference)
+10. [Security](#security)
+11. [Testing](#testing)
+12. [Project structure](#project-structure)
+13. [Design decisions](#design-decisions)
+14. [Troubleshooting and FAQ](#troubleshooting-and-faq)
+15. [Known limitations and what I'd improve](#known-limitations-and-what-id-improve)
+16. [Further documentation](#further-documentation)
 
 ---
 
@@ -134,11 +135,13 @@ Edit `backend/.env`:
 |---|---|---|---|
 | `NODE_ENV` | no | `development` | |
 | `PORT` | no | `3000` | API port |
-| `MONGO_URI` | **yes** | — | Development database |
+| `MONGO_URI` | **yes** | — | Database connection string (`MONGODB_URI` is accepted too, which is the name Vercel's Atlas integration uses) |
 | `JWT_SECRET` | **yes** | — | Signs login tokens. Use a long random value: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"` |
 | `JWT_EXPIRES_IN` | no | `2h` | Token lifetime |
 | `CLIENT_ORIGIN` | no | `http://localhost:4200` | The only browser origin CORS allows |
-| `UPLOAD_DIR` | no | `uploads` | Where uploaded files are written, relative to `backend/` |
+| `STORAGE_DRIVER` | no | `disk` | `disk`: files go to `UPLOAD_DIR`. `blob`: files go to Vercel Blob (used on Vercel) |
+| `UPLOAD_DIR` | no | `uploads` | Where uploaded files are written with the disk driver, relative to `backend/` |
+| `BLOB_READ_WRITE_TOKEN` | with `blob` | — | Vercel Blob access. Vercel sets it when a Blob store is connected to the project. |
 | `ADMIN_EMAIL` | for seed | — | Admin account created by `npm run seed` |
 | `ADMIN_PASSWORD` | for seed | — | At least 8 characters |
 | `MONGO_URI_TEST` | for tests | `.../iem_admission_test` | Test database. **Its name must end in `_test`**, because the tests wipe it. |
@@ -177,8 +180,11 @@ npm install
 npm start        # ng serve on http://localhost:4200
 ```
 
-The API address lives in one place,
-[`frontend/src/environments/environment.ts`](frontend/src/environments/environment.ts).
+The app calls the API at `/api` on its own origin
+([`frontend/src/environments/environment.ts`](frontend/src/environments/environment.ts)).
+Locally, `ng serve` forwards `/api` to `localhost:3000`
+([`frontend/proxy.conf.json`](frontend/proxy.conf.json)); on Vercel both are
+served from one domain. The same build works in both places.
 
 ### npm scripts
 
@@ -187,11 +193,80 @@ The API address lives in one place,
 | `backend/` | `npm run dev` | API with auto-restart |
 | `backend/` | `npm start` | API |
 | `backend/` | `npm run seed` | Admin + courses |
-| `backend/` | `npm test` | All 319 back-end tests (needs MongoDB) |
+| `backend/` | `npm test` | All 350 back-end tests (needs MongoDB) |
 | `backend/` | `npm run test:coverage` | Tests plus a coverage table |
 | `frontend/` | `npm start` | Dev server on port 4200 |
 | `frontend/` | `npm test` | Angular unit tests (`ng test`) |
 | `frontend/` | `npm run build` | Production build into `frontend/dist/` |
+
+---
+
+## Deploying to Vercel
+
+The whole system runs on Vercel as one project: Angular as static files, the
+Express API as one serverless function, uploads in Vercel Blob, and the
+database on MongoDB Atlas.
+
+| Part | On Vercel | Configured by |
+|---|---|---|
+| Angular app | Static files from `frontend/dist/frontend/browser` | [`vercel.json`](vercel.json) `buildCommand`, `outputDirectory` |
+| Express API | One serverless function, [`api/index.js`](api/index.js), for every `/api/*` request | `vercel.json` `rewrites` |
+| Uploaded files | Private Vercel Blob store | `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN` |
+| Database | MongoDB Atlas | `MONGO_URI` or `MONGODB_URI` |
+
+Two Vercel limits shaped the code:
+- **No lasting disk.** Files can't go to `uploads/`, so the `blob` storage
+  driver stores them in Vercel Blob as **private** blobs. MongoDB still holds
+  only a reference (`blob:applications/<id>/<uuid>.pdf`).
+- **Request and response bodies are capped at 4.5 MB.** A 5 MB file can't pass
+  through the API, so on Vercel uploads go straight from the browser to Blob,
+  in three steps:
+  1. `POST /api/applications/me/documents/blob-token`: the API checks login,
+     ownership, the Draft status and the **file type**, then issues an upload
+     token that Blob enforces at **5,242,880 bytes**.
+  2. The browser uploads to Blob with that token.
+  3. `POST /api/applications/me/documents/blob`: the API reads the real size
+     and first bytes from Blob, applies Rule DU, records the result, and
+     deletes the file if it's invalid.
+
+  Rule DU therefore holds on Vercel too, in the same order: type, then size,
+  then readability. Admins open files through 5-minute signed links
+  (`GET /api/admin/documents/:id/link`), so files never pass through a
+  function either.
+
+### Steps
+
+1. **Push the repo to GitHub** (already done for `rue19/iem-admission`).
+2. **Create the Vercel project:** import the repository at vercel.com/new, or
+   run `vercel link` in the repo root. Keep the root directory as the repo
+   root; `vercel.json` sets the install, build and output settings.
+3. **Add a database:** in the project's **Storage** tab, add **MongoDB Atlas**
+   from the Marketplace (it sets `MONGODB_URI`). Or create a free Atlas
+   cluster yourself, allow access from `0.0.0.0/0`, and add `MONGO_URI`.
+4. **Add file storage:** in **Storage**, create a **Blob** store and connect it
+   to the project (it sets `BLOB_READ_WRITE_TOKEN`).
+5. **Set environment variables** (Settings → Environment Variables):
+
+   | Variable | Value |
+   |---|---|
+   | `STORAGE_DRIVER` | `blob` |
+   | `JWT_SECRET` | a new long random value, not your local one |
+   | `NODE_ENV` | `production` |
+
+6. **Deploy:** push to `main` (with the Git integration) or run
+   `vercel --prod`.
+7. **Seed the live database** once, from your machine:
+   ```bash
+   cd backend
+   MONGO_URI='<the Atlas connection string>' JWT_SECRET=unused \
+   ADMIN_EMAIL='admin@your-domain' ADMIN_PASSWORD='<a strong password>' \
+   npm run seed
+   ```
+8. Open the deployment URL, check `/api/health` says `"db":"connected"`, then
+   register and run through the flow.
+
+Locally nothing changes: `STORAGE_DRIVER` defaults to `disk`, and the tests
+cover both drivers (`blobUploads.test.js` runs the API in `blob` mode).
 
 ---
 
@@ -260,18 +335,18 @@ flowchart LR
     end
     subgraph Data["Data layer"]
         DB[("MongoDB 8.2<br/>users · applications · courses<br/>documents · feerecords")]
-        FS[/"uploads/ on disk<br/>file bytes"/]
+        FS[/"file bytes<br/>uploads/ on disk (local)<br/>or Vercel Blob (deployed)"/]
     end
     NG -- "HTTP + JSON<br/>Authorization: Bearer JWT" --> EX
     EX -- "Mongoose" --> DB
-    EX -- "multer" --> FS
+    EX -- "multer / Blob SDK" --> FS
 ```
 
 | Layer | Technology | Responsibility |
 |---|---|---|
 | Client | Angular 22: standalone components, signals, Router, HttpClient, Reactive Forms | What the user sees. Guards and form checks here are for convenience only; the server re-checks everything. |
 | Application | Express 5 on Node.js | Routing, authentication (`verifyToken`), authorisation (`requireRole`), input validation (zod), business rules (`services/`) |
-| Data | MongoDB via Mongoose 9 | Five collections, one per data store in the DFD (D1–D5). Uploaded file bytes go to disk; MongoDB holds only metadata and a path. |
+| Data | MongoDB via Mongoose 9 | Five collections, one per data store in the DFD (D1–D5). Uploaded file bytes go to disk locally, or to private Vercel Blob storage when deployed; MongoDB holds only metadata and a reference. |
 
 The eight application modules from the HLD map onto the code like this:
 
@@ -280,7 +355,7 @@ The eight application modules from the HLD map onto the code like this:
 | Account Management | `routes/auth.js`, `controllers/authController.js`, `middleware/auth.js`, `middleware/requireRole.js` |
 | Application Management | `routes/applications.js`, `controllers/applicationController.js` |
 | Course Selection and Management | `routes/courses.js`, `controllers/courseController.js`, `scripts/seed.js` |
-| Document Management | `middleware/upload.js`, `controllers/documentController.js` |
+| Document Management | `middleware/upload.js`, `controllers/documentController.js`, `services/storage.js` |
 | Application and Document Validation | `services/documentValidation.js`, `services/submissionGate.js`, `validators/*` |
 | Application Submission and Status | `submitMyApplication` in `applicationController.js`, `services/statusWorkflow.js` |
 | Fee Record Management | `routes/fees.js`, `controllers/feeController.js` |
@@ -447,6 +522,11 @@ Details that matter:
 - A rejected upload leaves a small `Invalid` record with the reason (no file),
   so the page can show it and submission stays blocked until a corrected
   file replaces it.
+- On Vercel the same checks run in the same order, split across the
+  direct-to-Blob flow: type when the upload token is requested, size enforced
+  by Blob through the token's 5,242,880-byte cap, and size plus readability
+  re-checked from storage on confirmation. See
+  [Deploying to Vercel](#deploying-to-vercel).
 
 ### Submission gate
 
@@ -546,6 +626,7 @@ Base URL: `http://localhost:3000/api`. Every response is JSON.
 | Method and path | Who | What it does |
 |---|---|---|
 | `GET /health` | anyone | `200 { status: "ok", db: "connected" }`, or `503` with `db: "disconnected"` |
+| `GET /config` | anyone | `{ uploadMode: "disk" \| "blob", maxUploadBytes }`, which tells the app how to upload |
 | `POST /auth/register` | anyone | `{ name, email, password, contactNumber? }` → `201 { token, user }`. Always creates an applicant. |
 | `POST /auth/login` | anyone | `{ email, password }` → `{ token, user }`. The same 401 for an unknown email and a wrong password. |
 | `GET /auth/me` | logged in | The account the token belongs to |
@@ -553,7 +634,9 @@ Base URL: `http://localhost:3000/api`. Every response is JSON.
 | `POST /applications` | applicant | `{ course, qualifyingPercent, sportsQuota? }` → `201` Draft. A second application → 409. |
 | `GET /applications/me` | applicant | My application with the course populated; 404 if not started |
 | `PUT /applications/me` | applicant | Partial update of course, qualifyingPercent, sportsQuota. Draft only (409 otherwise). Any other field → 400. |
-| `POST /applications/me/documents` | applicant | Multipart: `file` + `documentType` (`Identity Proof`, `Academic Certificate`, `Other`). 201 if valid; 400 with the reason and the Invalid record if not. Draft only. |
+| `POST /applications/me/documents` | applicant | **Disk driver.** Multipart: `file` + `documentType` (`Identity Proof`, `Academic Certificate`, `Other`). 201 if valid; 400 with the reason and the Invalid record if not. Draft only. |
+| `POST /applications/me/documents/blob-token` | applicant | **Blob driver.** Called by the `@vercel/blob` client: checks ownership, Draft status and type, and returns an upload token capped at 5,242,880 bytes |
+| `POST /applications/me/documents/blob` | applicant | **Blob driver.** `{ documentType, pathname, originalName }` after the upload: checks the stored file and records it (201), or deletes it (400 with the reason) |
 | `GET /applications/me/documents` | applicant | `{ documents, requiredTypes }` |
 | `POST /applications/me/submit` | applicant | Gated submit → `{ applicationId, application, feeRecord }`; 400 with `reasons` if not ready |
 | `GET /fees/me` | applicant | My fee record; 404 before submitting |
@@ -563,7 +646,8 @@ Base URL: `http://localhost:3000/api`. Every response is JSON.
 | `GET /admin/applications/:id` | admin | `{ application, documents, feeRecord, allowedNextStatuses, eligibility }` |
 | `PATCH /admin/applications/:id/status` | admin | `{ status }`, checked against the workflow. Illegal → 409. |
 | `PATCH /admin/applications/:id/entrance-score` | admin | `{ entranceScore }` (0–100). Only while Submitted, Under Review or Waitlisted. Recalculates `meritScore`. |
-| `GET /admin/documents/:id/file` | admin | The uploaded file, served inline. 404 for a rejected upload (no file kept). |
+| `GET /admin/documents/:id/file` | admin | Disk driver: the uploaded file, served inline. 404 for a rejected upload (no file kept). |
+| `GET /admin/documents/:id/link` | admin | Blob driver: `{ url, expiresAt }`, a signed link valid for 5 minutes |
 
 Admin query strings are strict: an unknown parameter is a 400 rather than
 being silently ignored.
@@ -666,6 +750,7 @@ server, and the tests call the API directly to prove it.
 | Race conditions | Edit, submit, pay and admin status changes are conditional atomic updates, so double clicks and two admins at once succeed exactly once. | SUB-07, ADM-15 |
 | Injection | zod requires strings where strings are expected, so `{ "$ne": null }` never reaches MongoDB. Search text is regex-escaped. Unknown query parameters → 400. | SEC-20, SEC-21, ADM-07 |
 | Uploads | Type, size and magic-byte checks; random file names; files outside the upload folder can't be served; `nosniff` on downloads; rejected and partial files deleted. | DOC-*, ADM-30..32 |
+| Uploads on Vercel | Private blobs. Upload tokens are only issued for the caller's own application folder, with a random UUID name, and capped at 5,242,880 bytes. Size and content are re-read from storage, never trusted from the browser. Admins get 5-minute signed links. | BLOB-03..20, STORE-* |
 | Information leaks | No stack traces in responses, no `X-Powered-By`, file paths never sent to the browser. | SEC-29, SEC-30, DOC-01 |
 | Browser origin | CORS allows only `CLIENT_ORIGIN`. JSON bodies are capped at 100 KB. | SEC-31, SEC-22 |
 | Secrets | `.env` is git-ignored; only `.env.example` is committed. | |
@@ -675,7 +760,7 @@ server, and the tests call the API directly to prove it.
 ## Testing
 
 ```bash
-cd backend && npm test               # 319 tests, 12 suites, ~13 s (MongoDB must be running)
+cd backend && npm test               # 350 tests, 14 suites, ~15 s (MongoDB must be running)
 cd backend && npm run test:coverage  # same, plus a per-file coverage table
 cd frontend && npm test              # 18 Angular unit tests (Vitest)
 ```
@@ -684,8 +769,8 @@ Back-end tests run against `MONGO_URI_TEST`, which is wiped between tests.
 The helper refuses to touch a database whose name doesn't end in `_test`.
 Uploads during tests go to a temporary folder, never `backend/uploads/`.
 
-**Coverage** (back end, last run): 98.2% of statements, 93.1% of branches,
-100% of functions, 98.4% of lines. The few uncovered lines are startup and
+**Coverage** (back end, last run): 97.4% of statements, 91.2% of branches,
+98.9% of functions, 97.7% of lines. The few uncovered lines are startup and
 defensive branches, such as the database-connection log and `requireRole`
 being used without `verifyToken`.
 
@@ -705,6 +790,8 @@ being used without `verifyToken`.
 | `dashboard.test.js` | 20 | Aggregation counts and filters, stored merit, eligibility verdicts |
 | `security.test.js` | 16 | Injection, token tampering, information leaks, CORS, body size |
 | `e2e.test.js` | 1 | The whole Definition of Done through the API |
+| `blobUploads.test.js` | 24 | The Vercel upload flow (`STORAGE_DRIVER=blob`): token cap and ownership, type refused before upload, size and readability from storage, cleanup, signed links |
+| `storage.test.js` | 7 | The storage service against a mocked Blob SDK: delete, head, reading only the first bytes, signed links |
 
 Test names start with an ID (`DU-BV-06`, `SUB-04`, `SEC-02`, ...), so a
 failing test points straight at the test-plan item. The full index is in
@@ -765,8 +852,13 @@ FAQ).
 
 ```
 iem-admission/
-├── docker-compose.yml               MongoDB 8.2 for local development
+├── docker-compose.yml               MongoDB 8.2 for local development (not used on Vercel)
 ├── README.md
+├── package.json                     root manifest for Vercel (Node version)
+├── vercel.json                      Vercel build, output and /api rewrite
+├── .vercelignore
+├── api/
+│   └── index.js                     Vercel serverless entry: connect once, hand requests to Express
 ├── docs/
 │   ├── DEVELOPMENT_LOG.md           every file explained, phase by phase; full test index
 │   ├── DEMO_CHEATSHEET.md           the submit flow through all six steps, with line numbers
@@ -785,7 +877,7 @@ iem-admission/
 │   │   │   ├── db.js                connect / disconnect / status
 │   │   │   └── constants.js         roles, statuses, fee statuses, fee amount
 │   │   ├── models/                  User, Course, Application, Document, FeeRecord
-│   │   ├── validators/              zod schemas: auth, application, admin
+│   │   ├── validators/              zod schemas: auth, application, document, admin
 │   │   ├── middleware/
 │   │   │   ├── auth.js              verifyToken
 │   │   │   ├── requireRole.js
@@ -796,12 +888,14 @@ iem-admission/
 │   │   │   ├── documentValidation.js
 │   │   │   ├── submissionGate.js
 │   │   │   ├── statusWorkflow.js
-│   │   │   └── eligibility.js
+│   │   │   ├── eligibility.js
+│   │   │   └── storage.js           where file bytes live: disk or Vercel Blob
 │   │   ├── controllers/             auth, course, application, document, fee, admin
-│   │   ├── routes/                  health, auth, courses, applications, fees, admin
+│   │   ├── routes/                  health, config, auth, courses, applications, fees, admin
 │   │   └── utils/httpError.js
-│   └── tests/                       12 Jest suites + helpers (test DB, test users)
+│   └── tests/                       14 Jest suites + helpers (test DB, test users)
 └── frontend/
+    ├── proxy.conf.json               ng serve: forward /api to localhost:3000
     └── src/
         ├── environments/environment.ts   API base URL
         ├── styles.css                    shared grey/blue styles
@@ -809,7 +903,7 @@ iem-admission/
             ├── app.ts / app.html         shell: top bar + router outlet
             ├── app.routes.ts             routes and their guards
             ├── app.config.ts             router, HttpClient + interceptor
-            ├── core/                     AuthService, interceptor, guards,
+            ├── core/                     AuthService, interceptor, guards, ConfigService,
             │                             Application/Document/Fee/Admin services, models
             ├── pages/
             │   ├── login/  register/
@@ -861,6 +955,12 @@ frozen after submission, so it is stored when the score is entered.
 Eligibility also depends on the fee, which changes separately, so it is worked
 out on each request.
 
+**One storage switch instead of two code bases.** `STORAGE_DRIVER` picks disk
+(local, tests) or Vercel Blob (deployed). Only `services/storage.js` and the
+two upload entry points differ; every Rule DU check, the replace-and-delete
+logic and the records are shared. The browser asks `/api/config` which mode
+is active, so one Angular build serves both.
+
 **Plain JavaScript on the back end, TypeScript on the front end.** The brief
 allowed either for the back end. CommonJS with no build step keeps every file
 directly runnable and easy to walk through in a demo.
@@ -884,6 +984,8 @@ The UI uses under 200 lines of hand-written CSS rather than a component library.
 | `ExperimentalWarning: VM Modules` when testing | Expected; see below. |
 | Login works but `/admin` bounces you to `/dashboard` | You're logged in as an applicant. Admins only come from `npm run seed`. |
 | Forgot the admin password | Change `ADMIN_PASSWORD` in `.env` and run `npm run seed` again. |
+| Vercel: `/api/health` says the database is unavailable | Check `MONGO_URI`/`MONGODB_URI` in the project settings, and that Atlas allows access from `0.0.0.0/0`. |
+| Vercel: uploads fail with "Upload failed" | Check that a Blob store is connected (`BLOB_READ_WRITE_TOKEN` set) and `STORAGE_DRIVER=blob`. |
 
 **Why does `npm test` use `--experimental-vm-modules`?** MongoDB's Node driver
 (7.x) loads Node's `os` module with a dynamic `import()`. Jest only supports
@@ -921,9 +1023,13 @@ uploading both return 409 once the status leaves Draft.
 - **Transactions.** Submit uses a hand-written rollback because standalone
   MongoDB has no multi-document transactions. On a replica set (Atlas has one),
   I'd use a real transaction.
-- **File storage.** Files sit on the API server's disk, which doesn't scale past
-  one server. Object storage (S3 or similar), virus scanning and per-application
-  size quotas would come next.
+- **File storage.** Locally, files sit on the API server's disk. The Vercel
+  deployment uses Blob storage, but there's no virus scanning or
+  per-application size quota yet.
+- **Unconfirmed uploads on Vercel.** If a browser uploads to Blob and then never
+  calls the confirmation step (the tab is closed mid-way), that blob stays in
+  storage unrecorded. A scheduled job that deletes blobs with no matching
+  Document record would clean these up.
 - **Pagination.** The admin list returns at most 200 rows. Real use needs
   pagination.
 - **One application per applicant.** The data model would allow more if the
