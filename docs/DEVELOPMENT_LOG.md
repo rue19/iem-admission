@@ -9,6 +9,7 @@ line of the code.
 - [Phase 2 — Courses and Draft applications](#phase-2--courses-and-draft-applications)
 - [Phase 3 — Document upload and validation](#phase-3--document-upload-and-validation)
 - [Phase 4 — Submission, fees and the status workflow](#phase-4--submission-fees-and-the-status-workflow)
+- [Phase 5 — Admin review](#phase-5--admin-review)
 - [Test index](#test-index)
 - [Problems hit and how they were solved](#problems-hit-and-how-they-were-solved)
 
@@ -206,9 +207,55 @@ system now goes through one state machine.
 
 ---
 
+## Phase 5 — Admin review
+
+**Goal:** an administrator finds applications, reviews one in full (details,
+documents, fee), records the entrance score and moves the status forward,
+but only along the workflow. The applicant then sees the new status.
+
+### How an admin decision flows
+1. The page has already loaded `GET /api/admin/applications/:id`, which
+   includes `allowedNextStatuses` worked out by the server's workflow map. Only
+   those buttons are enabled.
+2. Clicking **Approve** sends `PATCH /:id/status { status: "Approved" }`.
+3. `verifyToken` + `requireRole('admin')` run, then `validate(statusBodySchema)`: the status must be one of the six names and no extra fields are allowed.
+4. The controller loads the current status and calls `assertTransition(current, "Approved", "admin")`, which throws 409 if the move is illegal.
+5. One atomic update, `{ _id, status: current } → { status: "Approved" }`. If another admin changed it a moment earlier, nothing matches and the response is 409 "changed by someone else". The page then reloads the real state.
+6. The response carries the updated application and its new `allowedNextStatuses`, so the buttons update straight away.
+
+### Back end
+| File | What it does and why |
+|---|---|
+| `src/routes/admin.js` | `router.use(verifyToken, requireRole('admin'))` covers **every** `/api/admin/*` path, including ones that don't exist (an applicant gets 403, not 404, so the API reveals nothing). |
+| `src/validators/adminSchemas.js` | **List query:** `status` must be a known status, `course` a valid ObjectId, `q` at most 100 characters; empty strings (the "All" dropdown options) mean no filter. **Status body:** `{ status }` only (strict). **Entrance score:** a number from 0 to 100, strict, so `"50"` and `null` are rejected. |
+| `src/middleware/validate.js` | Gained `validate(schema, 'query')`. Express 5 makes `req.query` read-only, so the parsed result goes on `req.validatedQuery`. |
+| `src/controllers/adminController.js` | **list:** builds a filter from status and course. For `q`, it finds users whose name or email contains the text (case-insensitive, with **regex characters escaped**, so `.*` is literal), and also matches the Application ID if `q` is a valid ObjectId. Results are populated with applicant name, email and contact plus the course, newest first, capped at 200. **detail:** application, documents, fee record and `allowedNextStatuses`. **updateStatus:** follows the flow above. **setEntranceScore:** one atomic update that applies only while the status is Submitted, Under Review or Waitlisted; otherwise 409 (no scoring a Draft, and no rewriting a score after the final decision). **downloadDocument:** streams a stored file with `res.sendFile(name, { root: uploadDir })`; `root` refuses any path outside the upload folder. It sends the type recorded at upload, `nosniff`, and an RFC 5987 `filename*` header. Rejected uploads have no file, so they return 404. |
+
+**Design choices**
+- **Admins can see Drafts.** This shows who has started but not submitted.
+  The workflow still stops an admin from acting on a Draft (Draft → Submitted
+  is the applicant's move only).
+- **Entrance score is separate from the status.** Recording a score doesn't
+  move the application. Phase 6 uses the score for the merit and eligibility
+  calculations.
+- **"Information verified" lives only in the browser.** It is the reviewer's
+  checklist tick, and Approve stays disabled until it is ticked. It is UX, not
+  a server rule, and it isn't stored.
+
+### Front end
+| File | What it does and why |
+|---|---|
+| `core/admin.service.ts` | `list(filters)` (only non-empty filters go in the query string), `get`, `updateStatus`, `setEntranceScore`, and `documentFile`. The file is fetched as a **Blob through HttpClient**, so the interceptor adds the token; a plain `<a href>` couldn't send the token. |
+| `core/models.ts` | Gained `APPLICATION_STATUSES` for the filter dropdown. |
+| `pages/admin-review/*` | Built to match the wireframe. **Filters:** search (ID, name or email), status and course, plus Clear. **Results list** with status badges. **Application information** card: ID, applicant, course, %, sports quota, date, entrance score, fee and reference. **Verification:** each document with Valid/Invalid and the server's reason, **View** for valid files, "Required documents valid" (computed) and an "Information verified" tick. **Entrance score:** shown only while it can be recorded. **Decision:** Approve / Reject enabled from `allowedNextStatuses`, plus **Update Status** with a dropdown of the other legal moves (Under Review, Waitlisted). After any change, both the detail and its row in the list update. **View** opens the new tab inside the click so pop-up blockers allow it, then fills it with the file. |
+
+The aggregation dashboard counts (by course and status) arrive in Phase 6.
+
+---
+
 ## Test index
 
-`npm test` in `backend/` runs 205 tests in 7 suites.
+`npm test` in `backend/` runs 260 tests in 8 suites.
 
 | ID | What it proves |
 |---|---|
@@ -237,6 +284,9 @@ system now goes through one state machine.
 | SEC-07 | An admin gets 403 on applicant-only routes (applications, documents, submit, fees) |
 | SEC-08 | An unauthenticated upload is refused before anything is written to disk |
 | SEC-09 | Submit and pay require a token |
+| SEC-02 | **An applicant gets 403 on every `/api/admin/*` route**, including an unknown one |
+| SEC-10 | No token → 401 on every admin route |
+| SEC-11 | An applicant can't approve their own application through the admin route or their own update route |
 | **Rule DU unit tests** | `tests/documentValidation.test.js` |
 | DU-BV-00 | `MAX_BYTES` is exactly 5,242,880 |
 | DU-BV-01..16 | File-size boundaries: −1 → invalid size; 0 → EMPTY; 1, 5,242,879 and 5,242,880 → OK; 5,242,881, 8,808,038, 2,147,483,648 and 4,294,967,296 → TOO_LARGE; NaN, ±Infinity, `"5MB"`, 1.5, undefined and null → invalid size (400), never Valid |
@@ -290,6 +340,23 @@ system now goes through one state machine.
 | FEE-04 | Paying twice → 409 |
 | FEE-05 | A client-sent `amount` and `feeStatus` are ignored |
 | FEE-06 | Paying doesn't change the application status |
+
+| **Admin integration tests** | `tests/admin.test.js` |
+| ADM-01 | List with applicant (no passwordHash) and course populated |
+| ADM-02..04 | Filter by status, by course, by both; empty filters mean all |
+| ADM-05 | Unknown status filter or malformed course id → 400 |
+| ADM-06 | Search by Application ID, by name (case-insensitive) and by email |
+| ADM-07 | `q=.*` matches nothing (regex escaped) |
+| ADM-08 | Detail includes documents (no file path), fee and `allowedNextStatuses` |
+| ADM-09 | Unknown id → 404; malformed id → 400 |
+| ADM-10..11 | Legal paths: Submitted → Under Review → Waitlisted → Approved; Under Review → Rejected |
+| ADM-12 | **Illegal transitions** (skip a step, same status, backwards, out of a final state) → 409, unchanged |
+| ADM-13 | An admin can't submit a Draft |
+| ADM-14 | Unknown status, missing status or an extra field → 400 |
+| ADM-15 | Two admins deciding at once → exactly one 200 and one 409 |
+| ADM-16 | **The applicant sees the admin's decision** on `GET /applications/me` |
+| ADM-20..23 | Entrance score: 0, 50, 72.5 and 100 are recorded; above 100, below 0, a string, null, missing or extra fields → 400; Draft, Approved or Rejected → 409; unknown → 404 |
+| ADM-30..32 | Admin opens a valid file (type, `nosniff`, filename header, real bytes); a rejected upload → 404; an applicant → 403 |
 
 ---
 

@@ -12,7 +12,7 @@ Angular form ──HTTP/JSON──▶ Express route (on Node) ──▶ Mongoose
      └──────────── Angular updates the page ◀── JSON response ◀────────┘
 ```
 
-> **Status: Phase 4 of 7 complete** (accounts, login, courses, Draft applications, document upload, submission, fees).
+> **Status: Phase 5 of 7 complete.** The full cycle works: register → apply → upload → submit → admin review → decision → applicant sees the new status.
 > See [Roadmap](#roadmap) and [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md)
 > for what each phase added and why every file exists.
 
@@ -55,10 +55,9 @@ Three layers, matching the high-level design:
 | Layer | What lives there |
 |---|---|
 | **Client** | One Angular app with applicant and admin views. Guards and form validation here are **UX only**. |
-| **Application** | Express modules: Account Management, Application Management, Course Selection, Document Management, Application and Document Validation, Application Submission and Status, Fee Record Management, Application Review\*. |
+| **Application** | Express modules: Account Management, Application Management, Course Selection, Document Management, Application and Document Validation, Application Submission and Status, Fee Record Management, Application Review (admin). |
 | **Data** | MongoDB collections: `users` (D1), `applications` (D2), `courses` (D3), `documents` (D4), `feerecords` (D5). Uploaded file bytes live on disk in `backend/uploads/`; MongoDB stores only metadata and a reference. |
 
-\* arrives in a later phase.
 
 ### What each layer does in one request (example: "Save application")
 1. **Angular** — the reactive form is valid, so `ApplicationService.update()` sends `PUT /api/applications/me` with JSON; the interceptor adds `Authorization: Bearer <token>`.
@@ -121,8 +120,10 @@ npm start                # UI on http://localhost:4200
 3. Click **Edit Application**, change something and save.
 4. Click **Upload Documents**. Upload a PDF, JPG or PNG for Identity Proof and Academic Certificate; each slot shows **Valid**, or the server's reason it was rejected (wrong type, empty, over 5 MB, corrupted). Try an MP3 or a file over 5 MB to see the rejection messages.
 5. Once both required documents are **Valid**, click **Submit Application**. You get your Application ID, the status becomes **Submitted**, and an application fee of ₹1,000 appears on the dashboard as **Pending**. Click **Pay fee (mock)** to mark it **Paid** (no real payment is taken).
-6. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`.
-7. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
+6. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`. Search for the applicant by name, email or Application ID, or filter by status and course. Select the application to see its details, documents (**View** opens the file) and fee.
+7. Move it to **Under Review** with **Update Status**, record an **entrance score**, tick **Information verified**, then **Approve** (or **Reject** / **Waitlisted**). Only the moves the server allows are enabled.
+8. Log back in as the applicant and click **Track Status**: the badge shows the new status.
+9. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
 
 ## Running the tests
 
@@ -157,10 +158,11 @@ All responses are JSON. Errors always have the shape `{ "error": "message" }`
 | `POST /api/applications/me/submit` | applicant | Submit. Allowed only for a Draft with a course, a qualifying % of 0–100, and **Valid** Identity Proof and Academic Certificate; otherwise 400 with `error` and every blocking `reasons`. On success: status `Submitted`, a `Pending` fee record, and `{ applicationId, application, feeRecord }` | 4 ✅ |
 | `GET /api/fees/me` | applicant | My fee record (404 before submitting) | 4 ✅ |
 | `POST /api/fees/me/pay` | applicant | **Mock** payment: Pending → Paid with a `MOCK-…` reference. No body is read; paying twice → 409 | 4 ✅ |
-| `GET /api/admin/applications` | admin | List and filter applications | 5 |
-| `GET /api/admin/applications/:id` | admin | One application with its documents | 5 |
-| `PATCH /api/admin/applications/:id/status` | admin | Validated status transition | 5 |
-| `PATCH /api/admin/applications/:id/entrance-score` | admin | Record the entrance score | 5 |
+| `GET /api/admin/applications?status=&course=&q=` | admin | List, filter by status and/or course, and search `q` by Application ID, name or email (case-insensitive, regex characters treated literally) | 5 ✅ |
+| `GET /api/admin/applications/:id` | admin | `{ application, documents, feeRecord, allowedNextStatuses }` | 5 ✅ |
+| `PATCH /api/admin/applications/:id/status` | admin | `{ status }`, checked against the workflow; illegal → 409, unknown status → 400 | 5 ✅ |
+| `PATCH /api/admin/applications/:id/entrance-score` | admin | `{ entranceScore }` (0–100), only while Submitted, Under Review or Waitlisted; otherwise 409 | 5 ✅ |
+| `GET /api/admin/documents/:id/file` | admin | Opens an uploaded file (404 for rejected uploads, which have no file) | 5 ✅ |
 | `GET /api/admin/dashboard` | admin | Counts by course and status (aggregation) | 6 |
 
 ### Status codes used
@@ -183,6 +185,7 @@ directly with curl.
 - **Login** gives the same error for an unknown email and a wrong password, so it can't be used to find out who has an account.
 - **JWT** holds only `{ id, role }`, is verified on every protected request (algorithm pinned to HS256), and expires (default 2 h).
 - **Role** comes only from the verified token, never from the request body. Public registration can never create an admin; the seed script is the only way to make one.
+- **Admin routes**: every `/api/admin/*` route runs `verifyToken` + `requireRole('admin')`, so an applicant gets 403 on any of them, including made-up URLs. Admin status changes are atomic (`{ _id, status: <checked status> }`), so two admins deciding at once can't both win.
 - **Ownership**: applicant routes have no `:id` parameter. Every query filters by `req.user.id`, so an applicant cannot even name another applicant's application.
 - **Server-owned fields** (`status`, `entranceScore`, `meritScore`, `applicant`) are rejected with 400 if an applicant sends them (zod `.strict()`).
 - **Submit and pay are atomic** (`status: "Draft"` / `feeStatus: "Pending"` are part of the update query), so double clicks or parallel requests succeed exactly once. If creating the fee record fails, the status is put back to Draft.
@@ -194,7 +197,7 @@ directly with curl.
   2. 0 < size ≤ 5,242,880 bytes (1 MB = 1,048,576 bytes, limit inclusive);
   3. the first bytes match the type (`%PDF`, `FF D8 FF`, `89 50 4E 47`).
 
-  The size is the number of bytes actually received; multer stops reading at the limit, so an oversized file is never fully written. Files are stored under a random UUID name, never the user's file name (no path traversal). Every rejected or interrupted upload is deleted from disk. MongoDB stores metadata and a path only, never file bytes, and the path is never sent to the browser.
+  The size is the number of bytes actually received; multer stops reading at the limit, so an oversized file is never fully written. Files are stored under a random UUID name, never the user's file name (no path traversal). Every rejected or interrupted upload is deleted from disk. MongoDB stores metadata and a path only, never file bytes, and the path is never sent to the browser. Admins open files through an authenticated route that serves only from the upload folder, with `X-Content-Type-Options: nosniff`.
 
 ### Status workflow
 Only these status changes exist. The map lives in `backend/src/services/statusWorkflow.js`,
@@ -236,7 +239,7 @@ iem-admission/
 │   ├── tests/                   Jest + supertest suites and helpers
 │   └── uploads/                 uploaded files (git-ignored)
 └── frontend/src/app/
-    ├── core/                    AuthService, interceptor, guards, Application/Document/Fee services, models
+    ├── core/                    AuthService, interceptor, guards, Application/Document/Fee/Admin services, models
     ├── pages/                   login, register, applicant-dashboard, document-upload, admin-review
     └── shared/                  status badge, API error helper
 ```
@@ -261,7 +264,7 @@ iem-admission/
 | 2 | Course list, Draft application create/read/update; applicant dashboard | ✅ |
 | 3 | Document upload (multer, validation service, disk cleanup); upload page; file-size tests | ✅ |
 | 4 | Submission gating, fee record, mock payment, status workflow service | ✅ |
-| 5 | Admin list/filter/review, status transitions, entrance score; admin review page | ⏳ |
+| 5 | Admin list/filter/review, status transitions, entrance score; admin review page | ✅ |
 | 6 | Aggregation dashboard; eligibility and merit functions | ⏳ |
 | 7 | Security/integration test pass, final docs, demo cheat-sheet | ⏳ |
 
