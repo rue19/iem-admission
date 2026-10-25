@@ -36,3 +36,19 @@ export interface ApplicationInput {
   qualifyingPercent: number;
   sportsQuota: boolean;
 }
+
+export type DocumentType = 'Identity Proof' | 'Academic Certificate' | 'Other';
+
+// Named UploadedDocument so it doesn't clash with the browser's global `Document`.
+export interface UploadedDocument {
+  _id: string;
+  application: string;
+  documentType: DocumentType;
+  originalName: string;
+  mimeType: string;
+  sizeBytes: number;
+  validationStatus: 'Valid' | 'Invalid';
+  validationMessage: string | null; // the server's reason when Invalid
+  createdAt: string;
+  updatedAt: string;
+}
