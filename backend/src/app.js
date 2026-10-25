@@ -8,6 +8,7 @@ const healthRoutes = require('./routes/health');
 const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
 const applicationRoutes = require('./routes/applications');
+const feeRoutes = require('./routes/fees');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -25,6 +26,7 @@ app.use('/api/auth', authRoutes);
 // Protected: each router applies verifyToken (and requireRole) itself.
 app.use('/api/courses', courseRoutes);
 app.use('/api/applications', applicationRoutes);
+app.use('/api/fees', feeRoutes);
 
 // Must come after all routes.
 app.use(notFound);
