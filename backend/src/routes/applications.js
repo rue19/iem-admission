@@ -11,6 +11,7 @@ const {
   createApplication,
   getMyApplication,
   updateMyApplication,
+  submitMyApplication,
 } = require('../controllers/applicationController');
 const { uploadDocument, listMyDocuments } = require('../controllers/documentController');
 const { uploadSingleFile } = require('../middleware/upload');
@@ -29,5 +30,8 @@ router.put('/me', validate(updateApplicationSchema), updateMyApplication);
 // client can't make the server write files to disk.
 router.post('/me/documents', uploadSingleFile, uploadDocument);
 router.get('/me/documents', listMyDocuments);
+
+// No body is read: everything needed is already on the server.
+router.post('/me/submit', submitMyApplication);
 
 module.exports = router;
