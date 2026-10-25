@@ -11,6 +11,7 @@ line of the code.
 - [Phase 4 — Submission, fees and the status workflow](#phase-4--submission-fees-and-the-status-workflow)
 - [Phase 5 — Admin review](#phase-5--admin-review)
 - [Phase 6 — Dashboard, eligibility and merit](#phase-6--dashboard-eligibility-and-merit)
+- [Phase 7 — Security pass, browser check and final docs](#phase-7--security-pass-browser-check-and-final-docs)
 - [Test index](#test-index)
 - [Problems hit and how they were solved](#problems-hit-and-how-they-were-solved)
 
@@ -290,9 +291,80 @@ counts (with names) and the course × status table.
 
 ---
 
+## Phase 7 — Security pass, browser check and final docs
+
+**Goal:** check the finished system against the test plan, attack it the way
+a reviewer would, look at it in a real browser, and write the final
+documentation.
+
+### Security pass
+Section 11 of the brief asked for five security properties. Earlier suites
+already covered them (SEC-01..11). This phase added `tests/security.test.js`
+(16 tests) for the attacks someone is likely to try by hand: NoSQL operator
+injection, an oversized body, `__proto__` in JSON, an unsigned token, a token
+with an edited role, malformed `Authorization` headers, a token for a deleted
+account, `passwordHash` in admin responses, stack traces in 500s, and CORS
+from another origin.
+
+It found one real gap. `GET /api/admin/applications?status[$ne]=Draft` returned
+200. That was not an injection: Express 5's default query parser never builds
+`{ $ne: ... }` objects, so the key arrived as the literal string `status[$ne]`.
+But zod silently dropped it, so the request returned every application,
+unfiltered. The admin query schemas are now `.strict()`, so unknown
+parameters get a 400 (SEC-21).
+
+Two small hardening changes:
+- `app.disable('x-powered-by')` stops the API announcing it runs Express (SEC-29).
+- A JSON body over 100 KB now gets a clear `413 Request body is too large`
+  instead of Express's default message (SEC-22).
+
+`tests/e2e.test.js` (E2E-01) runs the brief's whole Definition of Done in one
+test, using only the public API.
+
+### Front-end tests
+Four new specs (18 tests in total with `app.spec.ts`):
+- `auth.guards.spec.ts`: logged-out, wrong role, expired token, `guestGuard`.
+- `auth.interceptor.spec.ts`: the token goes to our API only; a 401 clears the
+  session, except on the login form.
+- `document.service.spec.ts`: the rule that enables Submit.
+- `status-badge.spec.ts`: status → CSS class.
+
+### Browser check
+A Playwright script drove headless Chrome through the whole flow against the
+real API and database. It registered an applicant, checked that `/admin`
+redirects, created a Draft, uploaded an MP3 (rejected, Submit disabled),
+replaced it, submitted, paid, then logged in as the admin, searched, moved to
+Under Review, scored 78, checked "Eligible", approved, and confirmed the
+applicant sees Approved. It saved the README screenshots
+(`docs/screenshots/`). The script itself isn't in the repository because
+it borrows Playwright from another project; the repository adds no extra
+dependencies.
+
+The run found two layout bugs, both fixed:
+- The admin filter bar overflowed its card, because long course names made
+  the `<select>` too wide. Fixed with `min-width: 0` on the grid items.
+- The "Under Review" badge wrapped onto two lines. Fixed with `white-space: nowrap`.
+
+It also confirmed that the only 4xx responses in a normal run are the
+deliberate "not started yet" 404s and the deliberately rejected upload, and
+that there were no JavaScript errors.
+
+### Coverage
+`npm run test:coverage`: 98.2% of statements, 93.1% of branches, 100% of
+functions, 98.4% of lines.
+
+### Documentation
+| File | Contents |
+|---|---|
+| `README.md` | Rewritten as the complete reference: features, quick start, full setup, screenshot walkthrough, architecture and data-model diagrams (Mermaid, checked to render), every business rule, the full API with examples, the security table, testing with a traceability matrix, structure, design decisions, FAQ, limitations |
+| `docs/DEMO_CHEATSHEET.md` | A five-minute demo order and the submit request through all six steps, with file:line references, plus likely questions and answers |
+| `docs/WRITEUP_OUTLINE.md` | An outline and fact sheet for the 1–2 page write-up |
+
+---
+
 ## Test index
 
-`npm test` in `backend/` runs 302 tests in 10 suites.
+`npm test` in `backend/` runs 319 tests in 12 suites. `npm test` in `frontend/` runs 18.
 
 | ID | What it proves |
 |---|---|
@@ -413,6 +485,22 @@ counts (with names) and the course × status table.
 | MERIT-INT-01..06 | Recording an entrance score stores the right merit (the four spec cases); re-scoring recalculates; a refused score leaves the merit untouched |
 | ELIG-INT-01..04 | The admin detail returns the right verdict: no fee, no score, eligible, below minimum |
 
+| **Security pass** | `tests/security.test.js` |
+| SEC-20 | `{ "$ne": null }` as email and password at login → 400, no token |
+| SEC-21 | `status[$ne]=`, `course[$gt]=` and unknown parameters on the admin list and dashboard → 400 |
+| SEC-22 | A JSON body over 100 KB → 413 |
+| SEC-23 | `__proto__: { role: "admin" }` in a register body → still an applicant; no prototype pollution |
+| SEC-24 | An unsigned (`alg: none`) admin token → 401 |
+| SEC-25 | An applicant token with the role edited to admin → 401 (signature broken) |
+| SEC-26 | Malformed `Authorization` headers → 401 |
+| SEC-27 | A token for a deleted account → 401 on `/auth/me` |
+| SEC-28 | `passwordHash` never appears in admin list or detail responses |
+| SEC-29 | No `X-Powered-By` header |
+| SEC-30 | An unexpected error → `{ "error": "Internal server error" }`, no internals |
+| SEC-31 | CORS allows `localhost:4200`, not another origin |
+| **End to end** | `tests/e2e.test.js` |
+| E2E-01 | The Definition of Done through the API: register, login, create, upload ×2, submit (Pending fee), pay, admin search and review, illegal approve → 409, Under Review, score 78 → merit 84.8 and Eligible, approve, dashboard counts, applicant sees Approved |
+
 ---
 
 ## Problems hit and how they were solved
@@ -438,3 +526,10 @@ counts (with names) and the course × status table.
    gives exactly `70`. The comment and test now use a real case,
    `77.7*0.4 + 66.6*0.6 = 71.03999999999999`, which shows why the merit
    score is rounded.
+6. **Ignored is not the same as rejected.** The security pass expected
+   `?status[$ne]=Draft` to be refused. Instead it returned 200 with *every*
+   application. That was harmless (no operator reached MongoDB), but it
+   silently ignored input. The admin query schemas are now strict.
+7. **The UI needed a real browser.** Builds and unit tests passed for six
+   phases, but the first screenshots showed the admin filter bar overflowing
+   its card. Only rendering the page caught it.
