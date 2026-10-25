@@ -5,7 +5,7 @@ import { forkJoin } from 'rxjs';
 import { ApplicationService } from '../../core/application.service';
 import { DocumentService, requiredDocumentsValid, REQUIRED_DOCUMENT_TYPES } from '../../core/document.service';
 import { Application, DocumentType, UploadedDocument } from '../../core/models';
-import { apiErrorMessage } from '../../shared/api-error';
+import { apiErrorMessage, apiErrorReasons } from '../../shared/api-error';
 import { StatusBadge } from '../../shared/status-badge';
 
 // Same numbers as the server's Rule DU, used only for an early hint.
@@ -35,6 +35,9 @@ export class DocumentUpload implements OnInit {
   protected readonly documents = signal<UploadedDocument[]>([]);
   protected readonly loading = signal(true);
   protected readonly error = signal('');
+  protected readonly submitting = signal(false);
+  protected readonly submitErrors = signal<string[]>([]);
+  protected readonly submittedId = signal('');
   protected readonly slots = signal<Slot[]>(
     (['Identity Proof', 'Academic Certificate', 'Other'] as DocumentType[]).map((type) => ({
       type,
@@ -48,7 +51,8 @@ export class DocumentUpload implements OnInit {
 
   protected readonly isDraft = computed(() => this.application()?.status === 'Draft');
   protected readonly requiredValid = computed(() => requiredDocumentsValid(this.documents()));
-  // Mirrors the server's submission gate (Phase 4) so the button state is honest.
+  // Mirrors the server's submission gate so the button state is honest. The
+  // server still re-checks everything when the button is pressed.
   protected readonly canSubmit = computed(
     () => this.isDraft() && !!this.application()?.course && this.requiredValid()
   );
@@ -96,6 +100,22 @@ export class DocumentUpload implements OnInit {
         // shows the server's reason even after a page reload.
         if (err.error?.document) this.replaceDocument(err.error.document);
         this.patchSlot(slot.type, { uploading: false, error: apiErrorMessage(err) });
+      },
+    });
+  }
+
+  submit(): void {
+    this.submitting.set(true);
+    this.submitErrors.set([]);
+    this.applications.submit().subscribe({
+      next: ({ applicationId, application }) => {
+        this.application.set(application);
+        this.submittedId.set(applicationId);
+        this.submitting.set(false);
+      },
+      error: (err) => {
+        this.submitErrors.set(apiErrorReasons(err));
+        this.submitting.set(false);
       },
     });
   }

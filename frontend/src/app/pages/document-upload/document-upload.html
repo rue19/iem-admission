@@ -16,7 +16,12 @@
     <a routerLink="/dashboard">Go to the dashboard to create it</a>
   </section>
 } @else {
-  @if (!isDraft()) {
+  @if (submittedId()) {
+    <p class="notice">
+      Application submitted. Your Application ID is <strong>{{ submittedId() }}</strong>.
+      An application fee is now due; pay it from the <a routerLink="/dashboard">dashboard</a>.
+    </p>
+  } @else if (!isDraft()) {
     <p class="notice">Your application has been submitted, so documents can no longer be changed.</p>
   }
 
@@ -79,16 +84,19 @@
           <dt>Required documents</dt><dd>{{ requiredValid() ? 'All valid' : 'Incomplete' }}</dd>
         </dl>
 
-        <!-- Enabled-looking only when the server's rules would allow it; the
-             submit endpoint itself arrives in Phase 4. -->
-        <button type="button" class="btn-primary submit" disabled>Submit Application</button>
-        <p class="muted">
-          @if (canSubmit()) {
-            Everything required is in place. Submission is switched on in Phase 4.
-          } @else {
-            Upload a valid Identity Proof and Academic Certificate to enable submission.
-          }
-        </p>
+        <button type="button" class="btn-primary submit" [disabled]="!canSubmit() || submitting()" (click)="submit()">
+          {{ submitting() ? 'Submitting…' : 'Submit Application' }}
+        </button>
+        @if (submitErrors().length) {
+          <ul class="alert reasons">
+            @for (reason of submitErrors(); track reason) {
+              <li>{{ reason }}</li>
+            }
+          </ul>
+        }
+        @if (isDraft() && !canSubmit()) {
+          <p class="muted">Upload a valid Identity Proof and Academic Certificate to enable submission.</p>
+        }
       </aside>
     }
   </div>
