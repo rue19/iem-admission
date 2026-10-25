@@ -7,7 +7,7 @@ import { ApplicationStatus } from '../core/models';
   selector: 'app-status-badge',
   template: `<span class="status-badge" [class]="cssClass()">{{ status() }}</span>`,
   styles: `
-    .status-badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+    .status-badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; }
     .draft { background: #e5e7eb; color: #374151; }
     .submitted, .under-review { background: #dbeafe; color: #1e40af; }
     .approved { background: #dcfce7; color: #166534; }
