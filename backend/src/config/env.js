@@ -8,10 +8,11 @@ require('dotenv').config({ quiet: true }); // quiet: skip dotenv's startup banne
 // wherever `node` happened to be started.
 const BACKEND_ROOT = path.resolve(__dirname, '..', '..');
 
-function required(name) {
-  const value = process.env[name];
+// required('A', 'B') accepts the first of several names that is set.
+function required(...names) {
+  const value = names.map((name) => process.env[name]).find(Boolean);
   if (!value) {
-    throw new Error(`Missing required environment variable: ${name} (see .env.example)`);
+    throw new Error(`Missing required environment variable: ${names.join(' or ')} (see .env.example)`);
   }
   return value;
 }
@@ -19,7 +20,8 @@ function required(name) {
 const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT) || 3000,
-  mongoUri: required('MONGO_URI'),
+  // MONGODB_URI is the name Vercel's MongoDB Atlas integration sets.
+  mongoUri: required('MONGO_URI', 'MONGODB_URI'),
   // Used from Phase 1 to sign login tokens. Required now so setup is done once.
   jwtSecret: required('JWT_SECRET'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '2h',
