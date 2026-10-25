@@ -9,6 +9,7 @@ const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
 const applicationRoutes = require('./routes/applications');
 const feeRoutes = require('./routes/fees');
+const adminRoutes = require('./routes/admin');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
 app.use('/api/applications', applicationRoutes);
 app.use('/api/fees', feeRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Must come after all routes.
 app.use(notFound);
