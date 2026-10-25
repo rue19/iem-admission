@@ -1,0 +1,104 @@
+<div class="page-head">
+  <div>
+    <h1>Applicant Dashboard</h1>
+    <p class="muted">Welcome, {{ auth.user()?.name }}</p>
+  </div>
+  @if (application(); as app) {
+    <app-status-badge [status]="app.status" />
+  } @else if (!loading()) {
+    <span class="muted">Not started</span>
+  }
+</div>
+
+@if (loading()) {
+  <p class="card">Loading your application…</p>
+} @else {
+  @if (error()) {
+    <p class="alert">{{ error() }}</p>
+  }
+  @if (message()) {
+    <p class="notice">{{ message() }}</p>
+  }
+
+  <div class="grid">
+    <section class="card">
+      <h2>Application details</h2>
+      @if (!application()) {
+        <p class="muted">Fill in the form below to start your application. It is saved as a Draft until you submit it.</p>
+      }
+
+      <form [formGroup]="form" (ngSubmit)="save()" novalidate>
+        <label for="name">Name</label>
+        <input id="name" [value]="auth.user()?.name ?? ''" disabled />
+
+        <label for="course">Selected course</label>
+        <select id="course" formControlName="course">
+          <option value="" disabled>Choose a course</option>
+          @for (c of courses(); track c._id) {
+            <option [value]="c._id">{{ c.courseName }}</option>
+          }
+        </select>
+        @if (form.controls.course.touched && form.controls.course.invalid) {
+          <small class="field-error">Select a course</small>
+        }
+
+        <label for="qualifyingPercent">Qualifying exam percentage</label>
+        <input id="qualifyingPercent" type="number" min="0" max="100" step="0.01" formControlName="qualifyingPercent" />
+        @if (form.controls.qualifyingPercent.touched && form.controls.qualifyingPercent.invalid) {
+          <small class="field-error">Enter a percentage between 0 and 100</small>
+        }
+
+        <label class="checkbox">
+          <input type="checkbox" formControlName="sportsQuota" />
+          Applying under sports quota
+        </label>
+
+        @if (application(); as app) {
+          <div class="readonly-row">
+            <span>Application date</span><strong>{{ app.applicationDate | date: 'mediumDate' }}</strong>
+          </div>
+          <div class="readonly-row">
+            <span>Status</span><strong>{{ app.status }}</strong>
+          </div>
+        }
+
+        @if (formOpen()) {
+          <div class="form-actions">
+            <button type="submit" class="btn-primary" [disabled]="saving()">
+              {{ saving() ? 'Saving…' : application() ? 'Save changes' : 'Create application' }}
+            </button>
+            @if (application()) {
+              <button type="button" class="btn-secondary" (click)="cancelEdit()">Cancel</button>
+            }
+          </div>
+        }
+      </form>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <h2>Quick actions</h2>
+        <div class="actions">
+          <button type="button" class="btn-secondary" (click)="startEdit()" [disabled]="!isDraft() || editing()">
+            Edit Application
+          </button>
+          <button type="button" class="btn-secondary" disabled title="Available in Phase 3">Upload Documents</button>
+          <button type="button" class="btn-secondary" disabled title="Available in Phase 4">Submit Application</button>
+          <button type="button" class="btn-secondary" (click)="refresh()" [disabled]="!application()">Track Status</button>
+        </div>
+        @if (application() && !isDraft()) {
+          <p class="muted">Your application has been submitted and can no longer be edited.</p>
+        }
+      </section>
+
+      <section class="card">
+        <h2>Submission checklist</h2>
+        <ul class="checklist">
+          @for (item of checklist(); track item.label) {
+            <li [class.done]="item.done">{{ item.label }}</li>
+          }
+        </ul>
+      </section>
+    </aside>
+  </div>
+}

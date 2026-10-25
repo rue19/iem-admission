@@ -1,0 +1,26 @@
+.page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.page-head .muted { margin: 4px 0 0; }
+
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; align-items: start; }
+.side { display: flex; flex-direction: column; gap: 20px; }
+@media (max-width: 720px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+h2 { font-size: 17px; margin: 0 0 8px; }
+
+.checkbox { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-top: 16px; }
+.readonly-row { display: flex; justify-content: space-between; font-size: 14px; padding: 10px 0 0; border-top: 1px solid #f3f4f6; margin-top: 12px; }
+.readonly-row span { color: #6b7280; }
+
+.form-actions { display: flex; gap: 10px; }
+.form-actions .btn-primary { flex: 1; }
+.form-actions .btn-secondary { margin-top: 20px; }
+
+.actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+
+.checklist { list-style: none; padding: 0; margin: 8px 0 0; font-size: 14px; }
+.checklist li { padding: 6px 0 6px 26px; position: relative; color: #6b7280; }
+.checklist li::before { content: ''; position: absolute; left: 0; top: 7px; width: 16px; height: 16px; border: 2px solid #d1d5db; border-radius: 50%; }
+.checklist li.done { color: #111827; }
+.checklist li.done::before { background: #1d4ed8; border-color: #1d4ed8; }
