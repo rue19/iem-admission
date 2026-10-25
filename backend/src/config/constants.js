@@ -15,4 +15,12 @@ const APPLICATION_STATUS = Object.freeze({
   WAITLISTED: 'Waitlisted',
 });
 
-module.exports = { ROLES, APPLICATION_STATUS };
+const FEE_STATUS = Object.freeze({
+  PENDING: 'Pending',
+  PAID: 'Paid',
+});
+
+// Flat application fee in INR, charged when an application is submitted.
+const APPLICATION_FEE_AMOUNT = 1000;
+
+module.exports = { ROLES, APPLICATION_STATUS, FEE_STATUS, APPLICATION_FEE_AMOUNT };
