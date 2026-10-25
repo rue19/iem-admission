@@ -1,0 +1,40 @@
+<section class="auth-card card">
+  <h1>Create account</h1>
+  <p class="muted">Register as an applicant</p>
+
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    <label for="name">Full name</label>
+    <input id="name" formControlName="name" autocomplete="name" />
+    @if (invalid('name')) {
+      <small class="field-error">Name must be at least 2 characters</small>
+    }
+
+    <label for="email">Email</label>
+    <input id="email" type="email" formControlName="email" autocomplete="email" />
+    @if (invalid('email')) {
+      <small class="field-error">Enter a valid email address</small>
+    }
+
+    <label for="contactNumber">Contact number (optional)</label>
+    <input id="contactNumber" type="tel" formControlName="contactNumber" autocomplete="tel" />
+    @if (invalid('contactNumber')) {
+      <small class="field-error">Contact number must be 10-13 digits</small>
+    }
+
+    <label for="password">Password</label>
+    <input id="password" type="password" formControlName="password" autocomplete="new-password" />
+    @if (invalid('password')) {
+      <small class="field-error">Password must be 8-72 characters</small>
+    }
+
+    @if (error()) {
+      <p class="alert">{{ error() }}</p>
+    }
+
+    <button type="submit" class="btn-primary" [disabled]="loading()">
+      {{ loading() ? 'Creating account…' : 'Register' }}
+    </button>
+  </form>
+
+  <p class="links">Already registered? <a routerLink="/login">Login</a></p>
+</section>
