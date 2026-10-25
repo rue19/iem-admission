@@ -12,7 +12,7 @@ Angular form ──HTTP/JSON──▶ Express route (on Node) ──▶ Mongoose
      └──────────── Angular updates the page ◀── JSON response ◀────────┘
 ```
 
-> **Status: Phase 3 of 7 complete** (accounts, login, courses, Draft applications, document upload).
+> **Status: Phase 4 of 7 complete** (accounts, login, courses, Draft applications, document upload, submission, fees).
 > See [Roadmap](#roadmap) and [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md)
 > for what each phase added and why every file exists.
 
@@ -55,8 +55,8 @@ Three layers, matching the high-level design:
 | Layer | What lives there |
 |---|---|
 | **Client** | One Angular app with applicant and admin views. Guards and form validation here are **UX only**. |
-| **Application** | Express modules: Account Management, Application Management, Course Selection, Document Management, Application and Document Validation, Submission and Status\*, Fee Records\*, Application Review\*. |
-| **Data** | MongoDB collections: `users` (D1), `applications` (D2), `courses` (D3), `documents` (D4), `feerecords` (D5)\*. Uploaded file bytes live on disk in `backend/uploads/`; MongoDB stores only metadata and a reference. |
+| **Application** | Express modules: Account Management, Application Management, Course Selection, Document Management, Application and Document Validation, Application Submission and Status, Fee Record Management, Application Review\*. |
+| **Data** | MongoDB collections: `users` (D1), `applications` (D2), `courses` (D3), `documents` (D4), `feerecords` (D5). Uploaded file bytes live on disk in `backend/uploads/`; MongoDB stores only metadata and a reference. |
 
 \* arrives in a later phase.
 
@@ -120,8 +120,9 @@ npm start                # UI on http://localhost:4200
 2. Pick a course, enter a qualifying percentage and click **Create application**. The status badge shows **Draft**.
 3. Click **Edit Application**, change something and save.
 4. Click **Upload Documents**. Upload a PDF, JPG or PNG for Identity Proof and Academic Certificate; each slot shows **Valid**, or the server's reason it was rejected (wrong type, empty, over 5 MB, corrupted). Try an MP3 or a file over 5 MB to see the rejection messages.
-5. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`.
-6. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
+5. Once both required documents are **Valid**, click **Submit Application**. You get your Application ID, the status becomes **Submitted**, and an application fee of ₹1,000 appears on the dashboard as **Pending**. Click **Pay fee (mock)** to mark it **Paid** (no real payment is taken).
+6. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`.
+7. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
 
 ## Running the tests
 
@@ -153,8 +154,9 @@ All responses are JSON. Errors always have the shape `{ "error": "message" }`
 | `PUT /api/applications/me` | applicant | Edit my application, **only while Draft** | 2 ✅ |
 | `POST /api/applications/me/documents` | applicant | Upload one document: multipart field `file` + `documentType` (`Identity Proof`, `Academic Certificate`, `Other`). 201 if valid; 400 with the reason if not | 3 ✅ |
 | `GET /api/applications/me/documents` | applicant | My documents, their validity, and `requiredTypes` | 3 ✅ |
-| `POST /api/applications/me/submit` | applicant | Submit (gated) and create the fee record | 4 |
-| `POST /api/fees/me/pay` | applicant | Mock payment | 4 |
+| `POST /api/applications/me/submit` | applicant | Submit. Allowed only for a Draft with a course, a qualifying % of 0–100, and **Valid** Identity Proof and Academic Certificate; otherwise 400 with `error` and every blocking `reasons`. On success: status `Submitted`, a `Pending` fee record, and `{ applicationId, application, feeRecord }` | 4 ✅ |
+| `GET /api/fees/me` | applicant | My fee record (404 before submitting) | 4 ✅ |
+| `POST /api/fees/me/pay` | applicant | **Mock** payment: Pending → Paid with a `MOCK-…` reference. No body is read; paying twice → 409 | 4 ✅ |
 | `GET /api/admin/applications` | admin | List and filter applications | 5 |
 | `GET /api/admin/applications/:id` | admin | One application with its documents | 5 |
 | `PATCH /api/admin/applications/:id/status` | admin | Validated status transition | 5 |
@@ -164,11 +166,11 @@ All responses are JSON. Errors always have the shape `{ "error": "message" }`
 ### Status codes used
 | Code | Meaning here |
 |---|---|
-| 400 | Input failed validation, or contained a field the client may not set |
+| 400 | Input failed validation, contained a field the client may not set, or the application isn't ready to submit |
 | 401 | No token, invalid token or expired token (or wrong login credentials) |
 | 403 | Logged in, but the role isn't allowed on this route |
 | 404 | The thing doesn't exist *for you* (e.g. no application yet) |
-| 409 | Conflict with current state: duplicate email, second application, editing or uploading for a non-Draft |
+| 409 | Conflict with current state: duplicate email, second application, editing or uploading for a non-Draft, illegal status change, fee already paid |
 | 503 | Health check: the database is not connected |
 
 ## Security model
@@ -183,6 +185,7 @@ directly with curl.
 - **Role** comes only from the verified token, never from the request body. Public registration can never create an admin; the seed script is the only way to make one.
 - **Ownership**: applicant routes have no `:id` parameter. Every query filters by `req.user.id`, so an applicant cannot even name another applicant's application.
 - **Server-owned fields** (`status`, `entranceScore`, `meritScore`, `applicant`) are rejected with 400 if an applicant sends them (zod `.strict()`).
+- **Submit and pay are atomic** (`status: "Draft"` / `feeStatus: "Pending"` are part of the update query), so double clicks or parallel requests succeed exactly once. If creating the fee record fails, the status is put back to Draft.
 - **Draft-only editing** is a single atomic query (`{ applicant, status: "Draft" }`), so a submit can't slip in between "check" and "update".
 - **CORS** allows only `CLIENT_ORIGIN`. The JSON body limit is 100 KB.
 - Error responses never include stack traces.
@@ -192,6 +195,22 @@ directly with curl.
   3. the first bytes match the type (`%PDF`, `FF D8 FF`, `89 50 4E 47`).
 
   The size is the number of bytes actually received; multer stops reading at the limit, so an oversized file is never fully written. Files are stored under a random UUID name, never the user's file name (no path traversal). Every rejected or interrupted upload is deleted from disk. MongoDB stores metadata and a path only, never file bytes, and the path is never sent to the browser.
+
+### Status workflow
+Only these status changes exist. The map lives in `backend/src/services/statusWorkflow.js`,
+and the status names in `backend/src/config/constants.js`.
+
+```
+Draft        → Submitted                          (applicant, via submit)
+Submitted    → Under Review                       (admin)
+Under Review → Approved | Rejected | Waitlisted   (admin)
+Waitlisted   → Approved | Rejected                (admin)
+Approved, Rejected: final
+```
+Every other change, including setting the same status again or moving out of
+Approved or Rejected, is refused with **409**. The applicant can't write
+`status` at all: the update endpoint rejects the field, and submit ignores
+its body.
 
 ## Project structure
 
@@ -207,17 +226,17 @@ iem-admission/
 │   │   ├── server.js            entry: connect DB, then listen
 │   │   ├── app.js               builds the Express app (no listen, so tests can import it)
 │   │   ├── config/              env.js, db.js, constants.js
-│   │   ├── models/              User, Course, Application, Document (Mongoose schemas)
+│   │   ├── models/              User, Course, Application, Document, FeeRecord (Mongoose schemas)
 │   │   ├── validators/          zod schemas for request bodies
 │   │   ├── middleware/          auth (verifyToken), requireRole, validate, upload (multer), errorHandler
 │   │   ├── controllers/         request handlers
 │   │   ├── routes/              URL → middleware → controller wiring
-│   │   ├── services/            business rules: documentValidation.js (Rule DU); more in Phases 4–6
+│   │   ├── services/            business rules: documentValidation (Rule DU), statusWorkflow, submissionGate
 │   │   └── utils/httpError.js
 │   ├── tests/                   Jest + supertest suites and helpers
 │   └── uploads/                 uploaded files (git-ignored)
 └── frontend/src/app/
-    ├── core/                    AuthService, interceptor, guards, ApplicationService, DocumentService, models
+    ├── core/                    AuthService, interceptor, guards, Application/Document/Fee services, models
     ├── pages/                   login, register, applicant-dashboard, document-upload, admin-review
     └── shared/                  status badge, API error helper
 ```
@@ -241,7 +260,7 @@ iem-admission/
 | 1 | Users, register/login (bcrypt + JWT), `verifyToken`, `requireRole`, seed; Angular login, AuthService, interceptor, guards | ✅ |
 | 2 | Course list, Draft application create/read/update; applicant dashboard | ✅ |
 | 3 | Document upload (multer, validation service, disk cleanup); upload page; file-size tests | ✅ |
-| 4 | Submission gating, fee record, mock payment, status workflow service | ⏳ |
+| 4 | Submission gating, fee record, mock payment, status workflow service | ✅ |
 | 5 | Admin list/filter/review, status transitions, entrance score; admin review page | ⏳ |
 | 6 | Aggregation dashboard; eligibility and merit functions | ⏳ |
 | 7 | Security/integration test pass, final docs, demo cheat-sheet | ⏳ |

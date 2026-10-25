@@ -8,6 +8,7 @@ line of the code.
 - [Phase 1 — Accounts and login](#phase-1--accounts-and-login)
 - [Phase 2 — Courses and Draft applications](#phase-2--courses-and-draft-applications)
 - [Phase 3 — Document upload and validation](#phase-3--document-upload-and-validation)
+- [Phase 4 — Submission, fees and the status workflow](#phase-4--submission-fees-and-the-status-workflow)
 - [Test index](#test-index)
 - [Problems hit and how they were solved](#problems-hit-and-how-they-were-solved)
 
@@ -157,9 +158,57 @@ before, and the page shows the error.
 
 ---
 
+## Phase 4 — Submission, fees and the status workflow
+
+**Goal:** the applicant submits only when everything required is in place. The
+status moves Draft → Submitted, a Pending fee record is created, and the
+applicant can mark it Paid with a mock payment. Every status change in the
+system now goes through one state machine.
+
+### How a submit flows
+1. `POST /api/applications/me/submit`. No body is read; a `status` sent by the client is ignored.
+2. The controller loads **my** application (by `req.user.id`), checks that its course still exists, and loads its documents.
+3. `getSubmissionBlockers()` lists every problem. If there are any, the response is **400** `{ error: <first reason>, reasons: [...] }` and nothing changes.
+4. `assertTransition('Draft', 'Submitted', 'applicant')` asks the state machine for permission.
+5. One atomic update, `{ _id, status: 'Draft' } → { status: 'Submitted' }`, makes three simultaneous clicks succeed exactly once.
+6. A `FeeRecord` is created (₹1,000, Pending). If that fails, the status is set back to Draft, because a standalone MongoDB has no multi-document transactions.
+7. The response is `{ applicationId, application, feeRecord }`.
+
+### Back end
+| File | What it does and why |
+|---|---|
+| `src/services/statusWorkflow.js` | The state machine as **one map**: `from → { to: role allowed }`. Approved and Rejected map to `{}` (final). `canTransition(from, to)` says whether a move is in the map. `allowedNextStatuses(from, role)` returns what a role may do next, and the admin page will use it to enable only legal buttons. `assertTransition(from, to, role)` throws **409** for an illegal move or the wrong role. Anything not in the map, including "same status again", is illegal by default. That is safer than listing what is forbidden. |
+| `src/services/submissionGate.js` | `getSubmissionBlockers({ application, courseExists, documents })` is a pure function that returns a list of reasons; an empty list means it may be submitted. The checks: status is Draft (if not, that is the **only** reason given); the course is selected and still exists; `qualifyingPercent` is a finite number from 0 to 100 (re-checked here even though the schema validates it, in case bad data reached the database); Identity Proof and Academic Certificate both exist and are **Valid**. The reason for an invalid document includes the upload's own message. |
+| `src/models/FeeRecord.js` | D5. `application` is **unique** (one fee per application). It has `amount`, `feeStatus` (Pending/Paid), `createdDate`, `paidDate` and `transactionRef` (the mock receipt). |
+| `src/config/constants.js` | Gained `FEE_STATUS` and `APPLICATION_FEE_AMOUNT` (1000). |
+| `src/controllers/applicationController.js` | Gained `submitMyApplication`, following the flow above. |
+| `src/controllers/feeController.js` | The fee is found through **my** application, so no id ever comes from the client. `payMyFee` is one atomic update, `{ feeStatus: 'Pending' } → Paid + paidDate + MOCK-<12 hex>`; paying twice is a 409. Nothing is read from the body, so a client can't choose the amount or the status. |
+| `src/routes/fees.js` | `GET /api/fees/me` and `POST /api/fees/me/pay`, applicants only. |
+
+**Design choices**
+- **Not Draft gives 400, not 409, on submit.** Section 8.2 of the spec says a
+  failed submit returns 400, and that covers "already submitted". The 409 from
+  `assertTransition` is still used for admin status changes in Phase 5.
+- **An invalid "Other" document doesn't block submission.** The spec gates on
+  the *required* documents only. Other is optional.
+- **Paying doesn't change the application status.** The fee is a separate
+  record (D5). It feeds eligibility in Phase 6: Eligible requires fee Paid.
+
+### Front end
+| File | What it does and why |
+|---|---|
+| `core/models.ts` | Gained `FeeRecord` and `SubmitResult`. |
+| `core/application.service.ts` | Gained `submit()`, which sends an empty body. |
+| `core/fee.service.ts` | `getMine()` (404 becomes `null`) and `pay()`, which sends no amount or card details. |
+| `shared/api-error.ts` | Gained `apiErrorReasons()`, which returns the submit endpoint's full list of reasons. |
+| `pages/document-upload/*` | **Submit Application** works now. It is enabled only when the server's rule would pass, shows every reason if the server still refuses, and shows the Application ID on success. |
+| `pages/applicant-dashboard/*` | The **Submit Application** quick action works too. A new **Application fee** card shows the amount, the status and **Pay fee (mock)**, and once paid, the date and reference. **Track Status** also refreshes the fee. |
+
+---
+
 ## Test index
 
-`npm test` in `backend/` runs 122 tests in 5 suites.
+`npm test` in `backend/` runs 205 tests in 7 suites.
 
 | ID | What it proves |
 |---|---|
@@ -182,11 +231,12 @@ before, and the page shows the error.
 | APP-07..08 | GET /me → 404 before creating; returns the course populated |
 | APP-09..11 | Draft editable; empty update → 400; update before creating → 404 |
 | APP-12 | A non-Draft application cannot be edited (409) and stays unchanged |
-| SEC-01 | Applicant B can neither read nor change applicant A's application |
+| SEC-01 | Applicant B can't read, change, submit or pay for applicant A's application, documents or fee |
 | SEC-05 | `status`, `entranceScore` and `meritScore` can't be set on create, and `status` can't be set on update |
 | SEC-06 | An applicant can't create an application for someone else |
-| SEC-07 | An admin gets 403 on applicant-only routes (applications and documents) |
+| SEC-07 | An admin gets 403 on applicant-only routes (applications, documents, submit, fees) |
 | SEC-08 | An unauthenticated upload is refused before anything is written to disk |
+| SEC-09 | Submit and pay require a token |
 | **Rule DU unit tests** | `tests/documentValidation.test.js` |
 | DU-BV-00 | `MAX_BYTES` is exactly 5,242,880 |
 | DU-BV-01..16 | File-size boundaries: −1 → invalid size; 0 → EMPTY; 1, 5,242,879 and 5,242,880 → OK; 5,242,881, 8,808,038, 2,147,483,648 and 4,294,967,296 → TOO_LARGE; NaN, ±Infinity, `"5MB"`, 1.5, undefined and null → invalid size (400), never Valid |
@@ -214,6 +264,32 @@ before, and the page shows the error.
 | DOC-18 | Uploading before an application exists → 404, nothing stored |
 | DOC-19 | Uploading after Draft → 409, nothing stored |
 | DOC-20 | A real upload **aborted midway** (connection dropped after 256 KB of a promised 2 MB): the partial file existed, then was removed; no record is stored |
+
+| **Status workflow unit tests** | `tests/statusWorkflow.test.js` |
+| WF-01 | All 7 legal transitions pass for the right role |
+| WF-02..03 | The other 29 of the 36 from/to pairs (same status, backwards, leaving a final state, skipping a step) are rejected with 409 for both roles |
+| WF-04 | Unknown statuses (`Selected`, lower-case `approved`, empty) are rejected |
+| WF-05..06 | Wrong actor: an admin can't submit; an applicant can't make any admin move |
+| WF-07..08 | `allowedNextStatuses` per role; Approved and Rejected are final |
+| GATE-01..07 | Submission gate: complete Draft passes; an invalid optional Other doesn't block; not Draft is the only reason; missing course; % out of range, NaN, null or a string; each missing required doc listed; an invalid required doc includes its reason |
+| **Submission and fee integration tests** | `tests/submission.test.js` |
+| SUB-01 | No documents → 400 with both reasons; status stays Draft; no fee |
+| SUB-02 | **Submit blocked while a document is invalid** |
+| SUB-03 | Only one required document → blocked |
+| SUB-04 | **Submit succeeds**: Submitted, a **Pending FeeRecord** (₹1,000), Application ID returned |
+| SUB-05 | **Re-uploading after a correction enables submit** |
+| SUB-06 | Submitting twice → 400; still one fee |
+| SUB-07 | Three simultaneous submits → exactly one succeeds |
+| SUB-08..09 | Course deleted, or stored % corrupted to 150 → blocked |
+| SUB-10 | No application → 404 |
+| SUB-11 | `status: "Approved"` in the submit body is ignored |
+| SUB-12 | After submit, editing → 409 and re-uploading → 409 |
+| FEE-01 | Paying before submitting → 404 |
+| FEE-02 | `GET /fees/me` shows Pending after submit |
+| FEE-03 | Pay → Paid, with `paidDate` and a `MOCK-…` reference |
+| FEE-04 | Paying twice → 409 |
+| FEE-05 | A client-sent `amount` and `feeStatus` are ignored |
+| FEE-06 | Paying doesn't change the application status |
 
 ---
 
