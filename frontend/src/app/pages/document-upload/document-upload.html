@@ -1,0 +1,95 @@
+<div class="page-head">
+  <div>
+    <h1>Document Upload and Submission</h1>
+    <p class="muted">Accepted formats: PDF, JPG, PNG · maximum 5 MB per file</p>
+  </div>
+  <a routerLink="/dashboard">← Back to dashboard</a>
+</div>
+
+@if (loading()) {
+  <p class="card">Loading…</p>
+} @else if (error()) {
+  <p class="alert">{{ error() }}</p>
+} @else if (!application()) {
+  <section class="card">
+    <p>You need to start your application before uploading documents.</p>
+    <a routerLink="/dashboard">Go to the dashboard to create it</a>
+  </section>
+} @else {
+  @if (!isDraft()) {
+    <p class="notice">Your application has been submitted, so documents can no longer be changed.</p>
+  }
+
+  <div class="grid">
+    <div class="slots">
+      @for (slot of slots(); track slot.type) {
+        @let doc = documentFor(slot.type);
+        <section class="card slot">
+          <div class="slot-head">
+            <h2>{{ slot.type }} @if (slot.required) {<span class="req">required</span>} @else {<span class="opt">optional</span>}</h2>
+            @if (doc) {
+              <span class="doc-status" [class.valid]="doc.validationStatus === 'Valid'">
+                {{ doc.validationStatus }}
+              </span>
+            } @else {
+              <span class="doc-status none">Not uploaded</span>
+            }
+          </div>
+
+          @if (doc) {
+            <p class="file-line">{{ doc.originalName }} · {{ formatSize(doc.sizeBytes) }}</p>
+            @if (doc.validationStatus === 'Invalid' && !slot.error) {
+              <p class="field-error">{{ doc.validationMessage }}</p>
+            }
+          }
+
+          @if (isDraft()) {
+            <div class="picker">
+              <input
+                #picker
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png"
+                [attr.aria-label]="'Choose ' + slot.type"
+                (change)="onFileChosen(slot.type, $event)"
+              />
+              <button type="button" class="btn-primary" [disabled]="!slot.file || slot.uploading" (click)="upload(slot, picker)">
+                {{ slot.uploading ? 'Uploading…' : doc ? 'Replace' : 'Upload' }}
+              </button>
+            </div>
+            @if (slot.hint) {
+              <p class="hint">{{ slot.hint }}</p>
+            }
+          }
+
+          @if (slot.error) {
+            <p class="alert">{{ slot.error }}</p>
+          }
+        </section>
+      }
+    </div>
+
+    @if (application(); as app) {
+      <aside class="card summary">
+        <h2>Application summary</h2>
+        <dl>
+          <dt>Application ID</dt><dd class="mono">{{ app._id }}</dd>
+          <dt>Course</dt><dd>{{ app.course.courseName }}</dd>
+          <dt>Qualifying %</dt><dd>{{ app.qualifyingPercent }}</dd>
+          <dt>Status</dt><dd><app-status-badge [status]="app.status" /></dd>
+          <dt>Required documents</dt><dd>{{ requiredValid() ? 'All valid' : 'Incomplete' }}</dd>
+        </dl>
+
+        <!-- Enabled-looking only when the server's rules would allow it; the
+             submit endpoint itself arrives in Phase 4. -->
+        <button type="button" class="btn-primary submit" disabled>Submit Application</button>
+        <p class="muted">
+          @if (canSubmit()) {
+            Everything required is in place. Submission is switched on in Phase 4.
+          } @else {
+            Upload a valid Identity Proof and Academic Certificate to enable submission.
+          }
+        </p>
+      </aside>
+    }
+  </div>
+}
