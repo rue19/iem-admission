@@ -1,0 +1,8 @@
+{
+  "name": "iem-admission",
+  "private": true,
+  "description": "IEM Admission System (MEAN stack). Root manifest used by Vercel; the apps live in backend/ and frontend/.",
+  "engines": {
+    "node": "24.x"
+  }
+}

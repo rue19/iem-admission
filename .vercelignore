@@ -1,0 +1,8 @@
+# Installed fresh on Vercel by installCommand
+**/node_modules
+# Local-only data and build output
+backend/uploads
+backend/.env
+frontend/.angular
+frontend/dist
+coverage
