@@ -7,6 +7,7 @@ line of the code.
 - [Phase 0 — Scaffolding](#phase-0--scaffolding)
 - [Phase 1 — Accounts and login](#phase-1--accounts-and-login)
 - [Phase 2 — Courses and Draft applications](#phase-2--courses-and-draft-applications)
+- [Phase 3 — Document upload and validation](#phase-3--document-upload-and-validation)
 - [Test index](#test-index)
 - [Problems hit and how they were solved](#problems-hit-and-how-they-were-solved)
 
@@ -103,9 +104,62 @@ saves a **Draft**, edits it, and sees its status on the dashboard.
 
 ---
 
+## Phase 3 — Document upload and validation
+
+**Goal:** an applicant uploads Identity Proof, Academic Certificate and an
+optional Other document. The server accepts a file only if it passes Rule DU,
+reports the first failing rule in the exact wording of the spec, and never
+leaves a rejected or half-uploaded file on disk.
+
+### How one upload flows
+1. The browser sends `multipart/form-data` with `documentType` and `file`.
+2. `verifyToken` and `requireRole('applicant')` run **before** multer, so an
+   anonymous request can't make the server write anything to disk.
+3. **multer** streams the file to `uploads/<random-uuid>.<ext>`, counting bytes
+   as they arrive. At 5,242,881 bytes it stops, deletes the partial file and
+   raises `LIMIT_FILE_SIZE`. If the client disconnects midway, multer deletes
+   the partial file as well.
+4. **The controller** checks that the application exists and is still a Draft,
+   and that `documentType` is valid. It then reads the first 8 bytes of the
+   saved file and asks `validateDocument` for a decision.
+5. **Invalid:** the file is deleted, and the slot's record is set to `Invalid`
+   with the reason (no `filePath`). The response is 400 with that reason.
+   **Valid:** the record points at the new file. In both cases the slot's
+   previous file is deleted only **after** the database points at the new state.
+
+### Back end
+| File | What it does and why |
+|---|---|
+| `src/services/documentValidation.js` | Rule DU as **pure functions**: values in, decisions out, with no Express, disk or database involved, so every branch is a one-line unit test. `MAX_BYTES = 5 × 1,048,576 = 5,242,880`. **`checkFileSize(bytes)`** takes the raw byte count only. A negative, NaN, Infinity, non-integer or non-number (`"5MB"`) value throws a 400 `Invalid file size`, so a nonsense size can never come out as "valid". 0 gives `EMPTY`, `> MAX_BYTES` (strictly greater) gives `TOO_LARGE`, and anything else gives `OK`. **`validateDocument({ extension, sizeBytes, isReadable })`** checks type, then size, then readability, and returns the **first** failure. **`hasValidSignature(header, ext)`** compares the magic bytes: `%PDF`, `FF D8 FF` or `89 50 4E 47`. The too-large message adds the exact size, e.g. `5,242,881 bytes (5.000001 MB)`, using 6 decimals so 1 byte over never shows as "5.00 MB". |
+| `src/models/Document.js` | D4: metadata only (`originalName`, `storedFileName`, `filePath`, `mimeType`, `sizeBytes`, `validationStatus`, `validationMessage`). There are no file bytes in MongoDB: they would bloat every query and backup, and a MongoDB document is capped at 16 MB. A unique index on `{ application, documentType }` gives one current document per slot. `toJSON` hides `filePath` and `storedFileName`, because the browser never needs the server's disk layout. |
+| `src/middleware/upload.js` | multer `diskStorage` with a **random UUID file name**. The user's name (e.g. `../../server.js`) is never used in a path, which prevents path traversal and name collisions. `limits.fileSize = MAX_BYTES` makes multer enforce the limit while reading. `uploadSingleFile` turns multer errors into our `{ error }` responses: `LIMIT_FILE_SIZE` becomes the too-large message, and a file in the wrong form field gets a clear 400. |
+| `src/controllers/documentController.js` | **upload:** follows the flow above. The size comes from `req.file.size`, the bytes multer actually wrote, never a client-declared value. The MIME type is derived from the validated extension, not taken from the browser. A `try/catch` deletes the uploaded file on **any** error path. **list:** the caller's documents plus `requiredTypes`. |
+| `src/config/env.js` | Gained `uploadDir` (from `UPLOAD_DIR`, resolved from `backend/`) and `backendRoot`. |
+| `src/routes/applications.js` | Gained `POST` and `GET /me/documents`. |
+
+**Design choice: why keep an "Invalid" record?** The spec says rejected files
+must not stay in storage, yet the upload page must show per-file status and
+submission must be blocked while a document is invalid. So the **file** is
+deleted, but a small metadata record with `validationStatus: "Invalid"` and the
+reason is kept. Uploading a corrected file replaces it.
+**Exception:** a file over the limit is cut off by multer before the
+controller runs, so no record is written. The slot keeps whatever it had
+before, and the page shows the error.
+
+### Front end
+| File | What it does and why |
+|---|---|
+| `core/models.ts` | Gained `DocumentType` and `UploadedDocument`. The name avoids a clash with the browser's global `Document`. |
+| `core/document.service.ts` | `list()` (404 becomes an empty list) and `upload()` with `FormData`. The Content-Type isn't set by hand because the browser adds the multipart boundary itself. `requiredDocumentsValid()` is shared by the dashboard and the upload page. |
+| `pages/document-upload/*` | Three slots, each showing Not uploaded / Valid / Invalid, the server's message and the file name and size. A client-side hint warns early about a wrong type, an empty file or one over 5 MB, but the file is still sent, so the **server's** message is what counts. The Application Summary card shows the ID, course, percentage, status and document state. The Submit button stays disabled; its readiness text uses the same rule the server will enforce in Phase 4. |
+| `pages/applicant-dashboard/*` | **Upload Documents** now links to `/documents`. The checklist item is ticked only when both required documents are Valid. |
+| `app.routes.ts` | `/documents`, guarded for applicants. |
+
+---
+
 ## Test index
 
-`npm test` in `backend/` runs 45 tests in 3 suites.
+`npm test` in `backend/` runs 122 tests in 5 suites.
 
 | ID | What it proves |
 |---|---|
@@ -131,7 +185,35 @@ saves a **Draft**, edits it, and sees its status on the dashboard.
 | SEC-01 | Applicant B can neither read nor change applicant A's application |
 | SEC-05 | `status`, `entranceScore` and `meritScore` can't be set on create, and `status` can't be set on update |
 | SEC-06 | An applicant can't create an application for someone else |
-| SEC-07 | An admin gets 403 on applicant-only routes |
+| SEC-07 | An admin gets 403 on applicant-only routes (applications and documents) |
+| SEC-08 | An unauthenticated upload is refused before anything is written to disk |
+| **Rule DU unit tests** | `tests/documentValidation.test.js` |
+| DU-BV-00 | `MAX_BYTES` is exactly 5,242,880 |
+| DU-BV-01..16 | File-size boundaries: −1 → invalid size; 0 → EMPTY; 1, 5,242,879 and 5,242,880 → OK; 5,242,881, 8,808,038, 2,147,483,648 and 4,294,967,296 → TOO_LARGE; NaN, ±Infinity, `"5MB"`, 1.5, undefined and null → invalid size (400), never Valid |
+| DU-BV-17 | 4,294,967,296 is not wrapped round to EMPTY (no 32-bit overflow) |
+| DU-P-01..07 | `validateDocument` paths: invalid type; valid type + oversized; valid type + unreadable; fully valid; empty; allowed extensions in any case; rejected extensions |
+| DU-PR-01..05 | Precedence: MP3 + 8 MB + unreadable → "Invalid file type"; size before readability; empty before readability; type before a nonsense size; valid type + nonsense size → Invalid file size |
+| DU-MSG-01..03 | The too-large message shows exact bytes and MB (1 byte over is not "5.00 MB") |
+| DU-R-01..09 | Magic bytes: real PDF/JPG/JPEG/PNG pass; text renamed .pdf, PNG renamed .jpg, truncated, empty and unknown types fail |
+| **Upload integration tests** | `tests/documents.test.js` |
+| DOC-01 | A valid PDF is accepted, written to disk under its stored name, and only a reference is kept in MongoDB |
+| DOC-02 | Valid PNG and JPG (upper-case extension) are accepted with the right MIME type |
+| DOC-03 | Exactly 5,242,880 bytes is accepted |
+| DOC-04 | `../../../etc/evil.pdf` is stored as `<uuid>.pdf` inside the upload folder |
+| DOC-05 | MP3 → "Invalid file type…", nothing on disk |
+| DOC-06 | 8.4 MB → "File too large…", removed from disk |
+| DOC-07 | 5,242,881 bytes → too large, nothing on disk |
+| DOC-08 | 0 bytes → "File is empty", nothing on disk |
+| DOC-09 | Text renamed .pdf, or PNG renamed .jpg → "File is corrupted or unreadable" |
+| DOC-10 | Precedence over HTTP: a zero-filled `.mp3` reports the type first |
+| DOC-11..13 | Bad `documentType`, no file, or the wrong form field → 400, nothing left behind |
+| DOC-14 | Re-uploading replaces the record and deletes the old file |
+| DOC-15 | An invalid re-upload marks the slot Invalid and removes the old file |
+| DOC-16 | Correcting an invalid upload makes the slot Valid again |
+| DOC-17 | The list shows each slot's validity and the required types |
+| DOC-18 | Uploading before an application exists → 404, nothing stored |
+| DOC-19 | Uploading after Draft → 409, nothing stored |
+| DOC-20 | A real upload **aborted midway** (connection dropped after 256 KB of a promised 2 MB): the partial file existed, then was removed; no record is stored |
 
 ---
 
@@ -147,3 +229,9 @@ saves a **Draft**, edits it, and sees its status on the dashboard.
    `node --experimental-vm-modules` in the `test` script.
 3. **Mongoose 9 deprecated the `new: true` option.** `findOneAndUpdate` now
    uses `returnDocument: 'after'`.
+4. **Expected MB values in tests must be calculated, not guessed.**
+   8,808,038 bytes is 8.39999962 MB (8.4 after rounding), not 8.400002. The
+   test was corrected; the code was right. Rounding to 6 decimals can never
+   make an over-limit file look like it is within 5 MB, because the smallest
+   over-limit size, 5,242,881 bytes, is 5.00000095 MB, which rounds to
+   5.000001.

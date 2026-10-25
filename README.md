@@ -12,7 +12,7 @@ Angular form ──HTTP/JSON──▶ Express route (on Node) ──▶ Mongoose
      └──────────── Angular updates the page ◀── JSON response ◀────────┘
 ```
 
-> **Status: Phase 2 of 7 complete** (accounts, login, courses, Draft applications).
+> **Status: Phase 3 of 7 complete** (accounts, login, courses, Draft applications, document upload).
 > See [Roadmap](#roadmap) and [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md)
 > for what each phase added and why every file exists.
 
@@ -42,6 +42,7 @@ Angular form ──HTTP/JSON──▶ Express route (on Node) ──▶ Mongoose
 | Front end | Angular 22 (standalone components, signals, Router, HttpClient, Reactive Forms) | The UI in the browser |
 | Auth | jsonwebtoken (JWT) + bcryptjs | Login tokens and password hashing |
 | Validation | zod | Server-side input validation |
+| File upload | multer | Streams the file to disk with a hard size limit; MongoDB gets only a reference |
 | Config | dotenv, cors | Environment settings; allow only the Angular origin |
 | Testing | Jest + supertest | Automated API tests, named after test-plan IDs |
 
@@ -54,8 +55,8 @@ Three layers, matching the high-level design:
 | Layer | What lives there |
 |---|---|
 | **Client** | One Angular app with applicant and admin views. Guards and form validation here are **UX only**. |
-| **Application** | Express modules: Account Management, Application Management, Course Selection, Document Management\*, Submission and Status\*, Fee Records\*, Application Review\*, Validation. |
-| **Data** | MongoDB collections: `users` (D1), `applications` (D2), `courses` (D3), `documents` (D4)\*, `feerecords` (D5)\*. Uploaded file bytes will live on disk in `backend/uploads/`; MongoDB stores only a reference. |
+| **Application** | Express modules: Account Management, Application Management, Course Selection, Document Management, Application and Document Validation, Submission and Status\*, Fee Records\*, Application Review\*. |
+| **Data** | MongoDB collections: `users` (D1), `applications` (D2), `courses` (D3), `documents` (D4), `feerecords` (D5)\*. Uploaded file bytes live on disk in `backend/uploads/`; MongoDB stores only metadata and a reference. |
 
 \* arrives in a later phase.
 
@@ -109,6 +110,7 @@ npm start                # UI on http://localhost:4200
 | `JWT_EXPIRES_IN` | Token lifetime, e.g. `2h` |
 | `CLIENT_ORIGIN` | The only browser origin CORS allows (Angular dev server) |
 | `ADMIN_EMAIL` / `ADMIN_PASSWORD` | The admin account created by `npm run seed` |
+| `UPLOAD_DIR` | Folder for uploaded files, relative to `backend/` (default `uploads`) |
 | `MONGO_URI_TEST` | Separate test database; **name must end in `_test`** because tests wipe it |
 
 `.env` is git-ignored. Only `.env.example` is committed.
@@ -117,8 +119,9 @@ npm start                # UI on http://localhost:4200
 1. Open http://localhost:4200, click **Register** and create an account. You land on the applicant dashboard.
 2. Pick a course, enter a qualifying percentage and click **Create application**. The status badge shows **Draft**.
 3. Click **Edit Application**, change something and save.
-4. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`.
-5. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
+4. Click **Upload Documents**. Upload a PDF, JPG or PNG for Identity Proof and Academic Certificate; each slot shows **Valid**, or the server's reason it was rejected (wrong type, empty, over 5 MB, corrupted). Try an MP3 or a file over 5 MB to see the rejection messages.
+5. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`.
+6. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
 
 ## Running the tests
 
@@ -148,8 +151,8 @@ All responses are JSON. Errors always have the shape `{ "error": "message" }`
 | `POST /api/applications` | applicant | Create a Draft: `{ course, qualifyingPercent, sportsQuota? }` | 2 ✅ |
 | `GET /api/applications/me` | applicant | My application (404 if not started) | 2 ✅ |
 | `PUT /api/applications/me` | applicant | Edit my application, **only while Draft** | 2 ✅ |
-| `POST /api/applications/me/documents` | applicant | Upload a document | 3 |
-| `GET /api/applications/me/documents` | applicant | My documents and their validity | 3 |
+| `POST /api/applications/me/documents` | applicant | Upload one document: multipart field `file` + `documentType` (`Identity Proof`, `Academic Certificate`, `Other`). 201 if valid; 400 with the reason if not | 3 ✅ |
+| `GET /api/applications/me/documents` | applicant | My documents, their validity, and `requiredTypes` | 3 ✅ |
 | `POST /api/applications/me/submit` | applicant | Submit (gated) and create the fee record | 4 |
 | `POST /api/fees/me/pay` | applicant | Mock payment | 4 |
 | `GET /api/admin/applications` | admin | List and filter applications | 5 |
@@ -165,7 +168,7 @@ All responses are JSON. Errors always have the shape `{ "error": "message" }`
 | 401 | No token, invalid token or expired token (or wrong login credentials) |
 | 403 | Logged in, but the role isn't allowed on this route |
 | 404 | The thing doesn't exist *for you* (e.g. no application yet) |
-| 409 | Conflict with current state: duplicate email, second application, editing a non-Draft |
+| 409 | Conflict with current state: duplicate email, second application, editing or uploading for a non-Draft |
 | 503 | Health check: the database is not connected |
 
 ## Security model
@@ -183,6 +186,12 @@ directly with curl.
 - **Draft-only editing** is a single atomic query (`{ applicant, status: "Draft" }`), so a submit can't slip in between "check" and "update".
 - **CORS** allows only `CLIENT_ORIGIN`. The JSON body limit is 100 KB.
 - Error responses never include stack traces.
+- **Uploads** (Rule DU, checked in this order, first failure reported):
+  1. type is PDF, JPG/JPEG or PNG;
+  2. 0 < size ≤ 5,242,880 bytes (1 MB = 1,048,576 bytes, limit inclusive);
+  3. the first bytes match the type (`%PDF`, `FF D8 FF`, `89 50 4E 47`).
+
+  The size is the number of bytes actually received; multer stops reading at the limit, so an oversized file is never fully written. Files are stored under a random UUID name, never the user's file name (no path traversal). Every rejected or interrupted upload is deleted from disk. MongoDB stores metadata and a path only, never file bytes, and the path is never sent to the browser.
 
 ## Project structure
 
@@ -198,18 +207,18 @@ iem-admission/
 │   │   ├── server.js            entry: connect DB, then listen
 │   │   ├── app.js               builds the Express app (no listen, so tests can import it)
 │   │   ├── config/              env.js, db.js, constants.js
-│   │   ├── models/              User, Course, Application (Mongoose schemas)
+│   │   ├── models/              User, Course, Application, Document (Mongoose schemas)
 │   │   ├── validators/          zod schemas for request bodies
-│   │   ├── middleware/          auth (verifyToken), requireRole, validate, errorHandler
+│   │   ├── middleware/          auth (verifyToken), requireRole, validate, upload (multer), errorHandler
 │   │   ├── controllers/         request handlers
 │   │   ├── routes/              URL → middleware → controller wiring
-│   │   ├── services/            business rules (Phases 3–6)
+│   │   ├── services/            business rules: documentValidation.js (Rule DU); more in Phases 4–6
 │   │   └── utils/httpError.js
 │   ├── tests/                   Jest + supertest suites and helpers
 │   └── uploads/                 uploaded files (git-ignored)
 └── frontend/src/app/
-    ├── core/                    AuthService, interceptor, guards, ApplicationService, models
-    ├── pages/                   login, register, applicant-dashboard, admin-review
+    ├── core/                    AuthService, interceptor, guards, ApplicationService, DocumentService, models
+    ├── pages/                   login, register, applicant-dashboard, document-upload, admin-review
     └── shared/                  status badge, API error helper
 ```
 
@@ -231,7 +240,7 @@ iem-admission/
 | 0 | Scaffolding, config, MongoDB connection, health route | ✅ |
 | 1 | Users, register/login (bcrypt + JWT), `verifyToken`, `requireRole`, seed; Angular login, AuthService, interceptor, guards | ✅ |
 | 2 | Course list, Draft application create/read/update; applicant dashboard | ✅ |
-| 3 | Document upload (multer, validation service, disk cleanup); upload page; file-size tests | ⏳ |
+| 3 | Document upload (multer, validation service, disk cleanup); upload page; file-size tests | ✅ |
 | 4 | Submission gating, fee record, mock payment, status workflow service | ⏳ |
 | 5 | Admin list/filter/review, status transitions, entrance score; admin review page | ⏳ |
 | 6 | Aggregation dashboard; eligibility and merit functions | ⏳ |
