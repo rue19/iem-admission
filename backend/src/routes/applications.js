@@ -13,7 +13,14 @@ const {
   updateMyApplication,
   submitMyApplication,
 } = require('../controllers/applicationController');
-const { uploadDocument, listMyDocuments } = require('../controllers/documentController');
+const {
+  uploadDocument,
+  blobUploadToken,
+  confirmBlobUpload,
+  listMyDocuments,
+} = require('../controllers/documentController');
+const { blobConfirmSchema } = require('../validators/documentSchemas');
+const env = require('../config/env');
 const { uploadSingleFile } = require('../middleware/upload');
 
 const router = express.Router();
@@ -26,9 +33,15 @@ router.post('/', validate(createApplicationSchema), createApplication);
 router.get('/me', getMyApplication);
 router.put('/me', validate(updateApplicationSchema), updateMyApplication);
 
-// multer runs only AFTER the token and role checks above, so an anonymous
-// client can't make the server write files to disk.
-router.post('/me/documents', uploadSingleFile, uploadDocument);
+if (env.storageDriver === 'blob') {
+  // Vercel: the browser uploads to Blob with a token from here, then confirms.
+  router.post('/me/documents/blob-token', blobUploadToken);
+  router.post('/me/documents/blob', validate(blobConfirmSchema), confirmBlobUpload);
+} else {
+  // Local disk: multer runs only AFTER the token and role checks above, so an
+  // anonymous client can't make the server write files to disk.
+  router.post('/me/documents', uploadSingleFile, uploadDocument);
+}
 router.get('/me/documents', listMyDocuments);
 
 // No body is read: everything needed is already on the server.

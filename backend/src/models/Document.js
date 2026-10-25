@@ -14,9 +14,13 @@ const documentSchema = new mongoose.Schema(
     // Random name we chose on disk. Both are null for an Invalid upload,
     // because the rejected file is deleted.
     storedFileName: { type: String, default: null },
-    filePath: { type: String, default: null }, // relative to backend/, e.g. "uploads/<uuid>.pdf"
+    // A reference, never bytes: "uploads/<uuid>.pdf" on disk, or
+    // "blob:applications/<appId>/<uuid>.pdf" in Vercel Blob (services/storage.js).
+    filePath: { type: String, default: null },
     mimeType: { type: String, required: true },
-    sizeBytes: { type: Number, required: true, min: 0 }, // bytes actually received, not client-declared
+    // Bytes actually received, never client-declared. null when a file was
+    // refused before any bytes were sent (wrong type, Blob upload flow).
+    sizeBytes: { type: Number, min: 0, default: null },
     validationStatus: { type: String, enum: ['Valid', 'Invalid'], required: true },
     // Why it was rejected, so the upload page can show the server's message.
     validationMessage: { type: String, default: null },
