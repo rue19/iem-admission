@@ -1,0 +1,13 @@
+<header class="topbar">
+  <span class="brand">IEM Admission System</span>
+  @if (auth.user(); as user) {
+    <span class="session">
+      {{ user.name }} <span class="role">{{ user.role }}</span>
+      <button type="button" class="btn-link" (click)="auth.logout()">Logout</button>
+    </span>
+  }
+</header>
+
+<main class="container">
+  <router-outlet />
+</main>

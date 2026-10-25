@@ -1,0 +1,13 @@
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #1e40af;
+  color: #fff;
+  padding: 14px 24px;
+}
+.brand { font-weight: 600; font-size: 18px; }
+.session { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.role { background: rgba(255, 255, 255, 0.2); padding: 2px 8px; border-radius: 999px; font-size: 12px; text-transform: capitalize; }
+.session .btn-link { color: #fff; }
+.container { max-width: 960px; margin: 32px auto; padding: 0 16px; }
