@@ -17,7 +17,10 @@ const listQuerySchema = z.object({
   ),
   // Search by Application ID, applicant name or email.
   q: z.preprocess(emptyToUndefined, z.string().trim().max(100).optional()),
-});
+})
+  // Unknown parameters (a typo, or "status[$ne]" probing for operator
+  // injection) are refused rather than silently ignored.
+  .strict();
 
 // GET /api/admin/dashboard?status=&course= (same filters, no search)
 const dashboardQuerySchema = listQuerySchema.pick({ status: true, course: true });
