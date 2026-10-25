@@ -56,7 +56,7 @@ export interface UploadedDocument {
   documentType: DocumentType;
   originalName: string;
   mimeType: string;
-  sizeBytes: number;
+  sizeBytes: number | null; // null when the file was refused before upload (Vercel)
   validationStatus: 'Valid' | 'Invalid';
   validationMessage: string | null; // the server's reason when Invalid
   createdAt: string;

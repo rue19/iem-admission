@@ -3,7 +3,13 @@ import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
 import { ApplicationService } from '../../core/application.service';
-import { DocumentService, requiredDocumentsValid, REQUIRED_DOCUMENT_TYPES } from '../../core/document.service';
+import { ConfigService } from '../../core/config.service';
+import {
+  DocumentService,
+  requiredDocumentsValid,
+  REQUIRED_DOCUMENT_TYPES,
+  tooLargeMessage,
+} from '../../core/document.service';
 import { Application, DocumentType, UploadedDocument } from '../../core/models';
 import { apiErrorMessage, apiErrorReasons } from '../../shared/api-error';
 import { StatusBadge } from '../../shared/status-badge';
@@ -30,6 +36,7 @@ interface Slot {
 export class DocumentUpload implements OnInit {
   private applications = inject(ApplicationService);
   private documentService = inject(DocumentService);
+  private config = inject(ConfigService);
 
   protected readonly application = signal<Application | null>(null);
   protected readonly documents = signal<UploadedDocument[]>([]);
@@ -86,21 +93,47 @@ export class DocumentUpload implements OnInit {
   }
 
   upload(slot: Slot, picker: HTMLInputElement): void {
-    if (!slot.file) return;
+    const app = this.application();
+    if (!slot.file || !app) return;
+    const file = slot.file;
+    const startedAt = Date.now();
     this.patchSlot(slot.type, { uploading: true, error: '' });
 
-    this.documentService.upload(slot.type, slot.file).subscribe({
+    this.documentService.upload(slot.type, file, app._id).subscribe({
       next: (doc) => {
         this.replaceDocument(doc);
         this.patchSlot(slot.type, { uploading: false, file: null, hint: '' });
         picker.value = ''; // clear the chooser so it doesn't look like a pending upload
       },
-      error: (err: HttpErrorResponse) => {
-        // A rejected file still comes back as an Invalid record, so the slot
-        // shows the server's reason even after a page reload.
-        if (err.error?.document) this.replaceDocument(err.error.document);
-        this.patchSlot(slot.type, { uploading: false, error: apiErrorMessage(err) });
+      error: (err) => {
+        if (err instanceof HttpErrorResponse) {
+          // A rejected file still comes back as an Invalid record, so the slot
+          // shows the server's reason even after a page reload.
+          if (err.error?.document) this.replaceDocument(err.error.document);
+          this.patchSlot(slot.type, { uploading: false, error: apiErrorMessage(err) });
+        } else {
+          this.explainBlobFailure(slot.type, file, startedAt);
+        }
       },
+    });
+  }
+
+  // Blob uploads (Vercel) fail inside the @vercel/blob SDK, which hides the
+  // server's message. Work out what happened from the server's own records.
+  private explainBlobFailure(type: DocumentType, file: File, startedAt: number): void {
+    forkJoin({ docs: this.documentService.list(), config: this.config.config$ }).subscribe({
+      next: ({ docs, config }) => {
+        this.documents.set(docs);
+        const doc = docs.find((d) => d.documentType === type);
+        let error = 'Upload failed. Please try again.';
+        if (doc?.validationStatus === 'Invalid' && new Date(doc.updatedAt).getTime() >= startedAt - 1000) {
+          error = doc.validationMessage ?? error; // e.g. wrong type, refused by the token route
+        } else if (file.size > config.maxUploadBytes) {
+          error = tooLargeMessage(file.size); // refused by Vercel Blob at the 5 MB cap
+        }
+        this.patchSlot(type, { uploading: false, error });
+      },
+      error: () => this.patchSlot(type, { uploading: false, error: 'Upload failed. Please try again.' }),
     });
   }
 

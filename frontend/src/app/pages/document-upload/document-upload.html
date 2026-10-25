@@ -42,7 +42,7 @@
           </div>
 
           @if (doc) {
-            <p class="file-line">{{ doc.originalName }} · {{ formatSize(doc.sizeBytes) }}</p>
+            <p class="file-line">{{ doc.originalName }}@if (doc.sizeBytes !== null) { · {{ formatSize(doc.sizeBytes) }}}</p>
             @if (doc.validationStatus === 'Invalid' && !slot.error) {
               <p class="field-error">{{ doc.validationMessage }}</p>
             }
