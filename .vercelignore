@@ -2,7 +2,10 @@
 **/node_modules
 # Local-only data and build output
 backend/uploads
-backend/.env
+# Secrets never leave this machine (Vercel has its own copies in project settings)
+**/.env
+**/.env.*
+!backend/.env.example
 frontend/.angular
 frontend/dist
 coverage

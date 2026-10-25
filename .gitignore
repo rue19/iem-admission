@@ -16,3 +16,6 @@ coverage/
 .angular/
 *.log
 .DS_Store
+
+# Vercel CLI link (project id) for this machine
+.vercel
