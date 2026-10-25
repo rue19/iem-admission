@@ -1,25 +1,29 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { forkJoin } from 'rxjs';
 import { ApplicationService } from '../../core/application.service';
 import { AuthService } from '../../core/auth.service';
-import { Application, Course } from '../../core/models';
+import { DocumentService, requiredDocumentsValid } from '../../core/document.service';
+import { Application, Course, UploadedDocument } from '../../core/models';
 import { apiErrorMessage } from '../../shared/api-error';
 import { StatusBadge } from '../../shared/status-badge';
 
 @Component({
   selector: 'app-applicant-dashboard',
-  imports: [ReactiveFormsModule, DatePipe, StatusBadge],
+  imports: [ReactiveFormsModule, RouterLink, DatePipe, StatusBadge],
   templateUrl: './applicant-dashboard.html',
   styleUrl: './applicant-dashboard.css',
 })
 export class ApplicantDashboard implements OnInit {
   private applications = inject(ApplicationService);
+  private documentService = inject(DocumentService);
   protected auth = inject(AuthService);
 
   protected readonly courses = signal<Course[]>([]);
   protected readonly application = signal<Application | null>(null);
+  protected readonly documents = signal<UploadedDocument[]>([]);
   protected readonly loading = signal(true);
   protected readonly saving = signal(false);
   protected readonly editing = signal(false);
@@ -43,17 +47,21 @@ export class ApplicantDashboard implements OnInit {
     return [
       { label: 'Application info completed', done: !!app },
       { label: 'Course selected', done: !!app?.course },
-      // Document upload arrives in Phase 3.
-      { label: 'Documents uploaded', done: false },
+      { label: 'Required documents uploaded and valid', done: requiredDocumentsValid(this.documents()) },
       { label: 'Application submitted', done: !!app && app.status !== 'Draft' },
     ];
   });
 
   ngOnInit(): void {
-    // Load the dropdown and the application in parallel.
-    forkJoin({ courses: this.applications.getCourses(), app: this.applications.getMine() }).subscribe({
-      next: ({ courses, app }) => {
+    // Load the dropdown, the application and its documents in parallel.
+    forkJoin({
+      courses: this.applications.getCourses(),
+      app: this.applications.getMine(),
+      docs: this.documentService.list(),
+    }).subscribe({
+      next: ({ courses, app, docs }) => {
         this.courses.set(courses);
+        this.documents.set(docs);
         this.showApplication(app);
         this.loading.set(false);
       },

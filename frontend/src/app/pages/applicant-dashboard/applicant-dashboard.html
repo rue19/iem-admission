@@ -82,7 +82,11 @@
           <button type="button" class="btn-secondary" (click)="startEdit()" [disabled]="!isDraft() || editing()">
             Edit Application
           </button>
-          <button type="button" class="btn-secondary" disabled title="Available in Phase 3">Upload Documents</button>
+          @if (application()) {
+            <a class="btn-secondary" routerLink="/documents">Upload Documents</a>
+          } @else {
+            <button type="button" class="btn-secondary" disabled title="Create your application first">Upload Documents</button>
+          }
           <button type="button" class="btn-secondary" disabled title="Available in Phase 4">Submit Application</button>
           <button type="button" class="btn-secondary" (click)="refresh()" [disabled]="!application()">Track Status</button>
         </div>
