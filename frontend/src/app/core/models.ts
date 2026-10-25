@@ -9,6 +9,16 @@ export type ApplicationStatus =
   | 'Rejected'
   | 'Waitlisted';
 
+// Same order as the server's constants; used for filter dropdowns.
+export const APPLICATION_STATUSES: ApplicationStatus[] = [
+  'Draft',
+  'Submitted',
+  'Under Review',
+  'Approved',
+  'Rejected',
+  'Waitlisted',
+];
+
 export interface Course {
   _id: string;
   courseName: string;
