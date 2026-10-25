@@ -2,7 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { Observable, catchError, map, of, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { Application, ApplicationInput, Course } from './models';
+import { Application, ApplicationInput, Course, SubmitResult } from './models';
 
 // All applicant-side calls for courses and the application, in one place, so
 // components never build URLs themselves. The JWT is added by the interceptor.
@@ -27,6 +27,11 @@ export class ApplicationService {
     return this.http
       .post<{ application: Application }>(`${this.api}/applications`, input)
       .pipe(map((r) => r.application));
+  }
+
+  // No body: the server checks the application and documents it already has.
+  submit(): Observable<SubmitResult> {
+    return this.http.post<SubmitResult>(`${this.api}/applications/me/submit`, {});
   }
 
   update(input: Partial<ApplicationInput>): Observable<Application> {

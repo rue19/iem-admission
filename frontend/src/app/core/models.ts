@@ -52,3 +52,19 @@ export interface UploadedDocument {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface FeeRecord {
+  _id: string;
+  application: string;
+  amount: number;
+  feeStatus: 'Pending' | 'Paid';
+  createdDate: string;
+  paidDate: string | null;
+  transactionRef: string | null; // mock receipt number
+}
+
+export interface SubmitResult {
+  applicationId: string;
+  application: Application;
+  feeRecord: FeeRecord;
+}

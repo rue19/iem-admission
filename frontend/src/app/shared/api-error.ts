@@ -9,3 +9,9 @@ export function apiErrorMessage(err: unknown): string {
   }
   return 'Something went wrong. Please try again.';
 }
+
+// The submit endpoint lists every blocking reason in `reasons`.
+export function apiErrorReasons(err: unknown): string[] {
+  if (err instanceof HttpErrorResponse && Array.isArray(err.error?.reasons)) return err.error.reasons;
+  return [apiErrorMessage(err)];
+}
