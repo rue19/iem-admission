@@ -87,13 +87,41 @@
           } @else {
             <button type="button" class="btn-secondary" disabled title="Create your application first">Upload Documents</button>
           }
-          <button type="button" class="btn-secondary" disabled title="Available in Phase 4">Submit Application</button>
+          <button type="button" class="btn-secondary" (click)="submit()" [disabled]="!canSubmit() || busy()"
+            [title]="canSubmit() ? '' : 'Needs a Draft application with valid Identity Proof and Academic Certificate'">
+            Submit Application
+          </button>
           <button type="button" class="btn-secondary" (click)="refresh()" [disabled]="!application()">Track Status</button>
         </div>
+        @if (actionErrors().length) {
+          <ul class="alert reasons">
+            @for (reason of actionErrors(); track reason) {
+              <li>{{ reason }}</li>
+            }
+          </ul>
+        }
         @if (application() && !isDraft()) {
           <p class="muted">Your application has been submitted and can no longer be edited.</p>
         }
       </section>
+
+      @if (fee(); as f) {
+        <section class="card">
+          <h2>Application fee</h2>
+          <div class="readonly-row"><span>Amount</span><strong>{{ f.amount | currency: 'INR' }}</strong></div>
+          <div class="readonly-row">
+            <span>Status</span>
+            <strong [class.paid]="f.feeStatus === 'Paid'" [class.pending]="f.feeStatus === 'Pending'">{{ f.feeStatus }}</strong>
+          </div>
+          @if (f.feeStatus === 'Paid') {
+            <div class="readonly-row"><span>Paid on</span><strong>{{ f.paidDate | date: 'mediumDate' }}</strong></div>
+            <div class="readonly-row"><span>Reference</span><strong class="mono">{{ f.transactionRef }}</strong></div>
+          } @else {
+            <button type="button" class="btn-primary pay" (click)="payFee()" [disabled]="busy()">Pay fee (mock)</button>
+            <p class="muted">Demo only: no real payment is taken.</p>
+          }
+        </section>
+      }
 
       <section class="card">
         <h2>Submission checklist</h2>

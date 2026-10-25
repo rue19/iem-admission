@@ -24,3 +24,8 @@ h2 { font-size: 17px; margin: 0 0 8px; }
 .checklist li::before { content: ''; position: absolute; left: 0; top: 7px; width: 16px; height: 16px; border: 2px solid #d1d5db; border-radius: 50%; }
 .checklist li.done { color: #111827; }
 .checklist li.done::before { background: #1d4ed8; border-color: #1d4ed8; }
+.reasons { padding-left: 28px; margin-bottom: 0; }
+.paid { color: #166534; }
+.pending { color: #92400e; }
+.pay { width: 100%; }
+.mono { font-family: ui-monospace, monospace; font-size: 12px; }
