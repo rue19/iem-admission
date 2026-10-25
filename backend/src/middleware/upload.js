@@ -9,7 +9,10 @@ const env = require('../config/env');
 const { MAX_BYTES, isAllowedType, normaliseExtension, tooLargeMessage } = require('../services/documentValidation');
 const httpError = require('../utils/httpError');
 
-fs.mkdirSync(env.uploadDir, { recursive: true });
+// Only the disk driver writes locally; on Vercel the filesystem is read-only.
+if (env.storageDriver === 'disk') {
+  fs.mkdirSync(env.uploadDir, { recursive: true });
+}
 
 const storage = multer.diskStorage({
   destination: env.uploadDir,

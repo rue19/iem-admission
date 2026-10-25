@@ -28,6 +28,18 @@ const env = {
   backendRoot: BACKEND_ROOT,
   // Where uploaded file bytes are written. MongoDB only stores a reference.
   uploadDir: path.resolve(BACKEND_ROOT, process.env.UPLOAD_DIR || 'uploads'),
+  // "disk": files go to uploadDir through multer (local development, tests).
+  // "blob": files go to Vercel Blob (the Vercel deployment, which has no
+  // lasting disk). See services/storage.js.
+  storageDriver: storageDriver(),
 };
+
+function storageDriver() {
+  const driver = process.env.STORAGE_DRIVER || 'disk';
+  if (!['disk', 'blob'].includes(driver)) {
+    throw new Error(`STORAGE_DRIVER must be "disk" or "blob", got "${driver}"`);
+  }
+  return driver;
+}
 
 module.exports = env;
