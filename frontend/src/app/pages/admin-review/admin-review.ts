@@ -1,7 +1,7 @@
 import { DatePipe } from '@angular/common';
 import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { AdminApplication, AdminService, ApplicationDetail } from '../../core/admin.service';
+import { AdminApplication, AdminService, ApplicationDetail, DashboardCounts } from '../../core/admin.service';
 import { ApplicationService } from '../../core/application.service';
 import { requiredDocumentsValid } from '../../core/document.service';
 import { APPLICATION_STATUSES, ApplicationStatus, Course, UploadedDocument } from '../../core/models';
@@ -24,6 +24,11 @@ export class AdminReview implements OnInit {
 
   protected readonly statuses = APPLICATION_STATUSES;
   protected readonly courses = signal<Course[]>([]);
+
+  // Top block: counts from the aggregation pipeline, using the same
+  // status/course filters as the list.
+  protected readonly counts = signal<DashboardCounts | null>(null);
+  protected readonly countsError = signal('');
 
   // Left column: search results.
   protected readonly filters = this.fb.group({ q: [''], status: [''], course: [''] });
@@ -61,6 +66,7 @@ export class AdminReview implements OnInit {
   }
 
   search(): void {
+    this.loadCounts();
     this.listLoading.set(true);
     this.listError.set('');
     this.admin.list(this.filters.getRawValue()).subscribe({
@@ -73,6 +79,23 @@ export class AdminReview implements OnInit {
         this.listLoading.set(false);
       },
     });
+  }
+
+  loadCounts(): void {
+    const { status, course } = this.filters.getRawValue();
+    this.admin.dashboard({ status, course }).subscribe({
+      next: (c) => {
+        this.counts.set(c);
+        this.countsError.set('');
+      },
+      error: (err) => this.countsError.set(apiErrorMessage(err)),
+    });
+  }
+
+  // Share of the total, for the bar widths.
+  percentOf(count: number): number {
+    const total = this.counts()?.total ?? 0;
+    return total ? Math.round((count / total) * 100) : 0;
   }
 
   clearFilters(): void {
@@ -106,6 +129,7 @@ export class AdminReview implements OnInit {
       next: ({ application, allowedNextStatuses }) => {
         this.showDetail({ ...current, application, allowedNextStatuses });
         this.patchResult(application);
+        this.loadCounts(); // the status counts just changed
         this.actionMessage.set(`Status changed to ${application.status}.`);
         this.saving.set(false);
       },
@@ -128,10 +152,13 @@ export class AdminReview implements OnInit {
     this.actionError.set('');
     const score = Number(this.scoreForm.getRawValue().entranceScore);
     this.admin.setEntranceScore(current.application._id, score).subscribe({
-      next: (application) => {
-        this.showDetail({ ...current, application });
-        this.patchResult(application);
-        this.actionMessage.set(`Entrance score recorded: ${application.entranceScore}.`);
+      next: () => {
+        // Re-fetch so the server's new eligibility verdict is shown too, but
+        // keep the reviewer's "Information verified" tick.
+        const verified = this.infoVerified();
+        this.select(current.application._id);
+        this.infoVerified.set(verified);
+        this.actionMessage.set(`Entrance score recorded: ${score}. Merit score recalculated.`);
         this.saving.set(false);
       },
       error: (err) => {

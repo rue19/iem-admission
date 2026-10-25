@@ -2,6 +2,51 @@
   <h1>Administrator Review</h1>
 </div>
 
+<section class="card counts">
+  <div class="card-head">
+    <h2>Dashboard</h2>
+    @if (counts(); as c) {
+      <span class="muted">{{ c.total }} application{{ c.total === 1 ? '' : 's' }} matching the filters</span>
+    }
+  </div>
+  @if (countsError()) {
+    <p class="alert">{{ countsError() }}</p>
+  } @else if (counts(); as c) {
+    <div class="counts-grid">
+      <div>
+        <h3>By status</h3>
+        <ul class="bars">
+          @for (row of c.byStatus; track row._id) {
+            <li>
+              <span class="bar-label">{{ row._id }}</span>
+              <span class="bar-track"><span class="bar" [style.width.%]="percentOf(row.count)"></span></span>
+              <strong>{{ row.count }}</strong>
+            </li>
+          } @empty {
+            <li class="muted">No applications.</li>
+          }
+        </ul>
+      </div>
+      <div>
+        <h3>By course</h3>
+        <ul class="bars">
+          @for (row of c.byCourse; track row._id) {
+            <li>
+              <span class="bar-label">{{ row.courseName }}</span>
+              <span class="bar-track"><span class="bar" [style.width.%]="percentOf(row.count)"></span></span>
+              <strong>{{ row.count }}</strong>
+            </li>
+          } @empty {
+            <li class="muted">No applications.</li>
+          }
+        </ul>
+      </div>
+    </div>
+  } @else {
+    <p class="muted">Loading counts…</p>
+  }
+</section>
+
 <form class="card filters" [formGroup]="filters" (ngSubmit)="search()">
   <input formControlName="q" placeholder="Search by Application ID, name or email" aria-label="Search" />
   <select formControlName="status" aria-label="Status filter">
@@ -73,9 +118,11 @@
           <dt>Sports quota</dt><dd>{{ d.application.sportsQuota ? 'Yes' : 'No' }}</dd>
           <dt>Applied on</dt><dd>{{ d.application.applicationDate | date: 'mediumDate' }}</dd>
           <dt>Entrance score</dt><dd>{{ d.application.entranceScore ?? 'Not recorded' }}</dd>
+          <dt>Merit score</dt><dd>{{ d.application.meritScore ?? '—' }}</dd>
           <dt>Fee</dt>
           <dd>{{ d.feeRecord ? d.feeRecord.feeStatus + (d.feeRecord.transactionRef ? ' · ' + d.feeRecord.transactionRef : '') : 'Not due (not submitted)' }}</dd>
         </dl>
+        <p class="eligibility" [class.eligible]="d.eligibility.eligible">{{ d.eligibility.message }}</p>
       </section>
 
       <section class="card">

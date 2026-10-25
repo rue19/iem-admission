@@ -14,6 +14,15 @@ export interface ApplicationDetail {
   documents: UploadedDocument[];
   feeRecord: FeeRecord | null;
   allowedNextStatuses: ApplicationStatus[]; // straight from the server's workflow map
+  eligibility: { eligible: boolean; message: string }; // computed by the server on each request
+}
+
+// Result of the MongoDB aggregation behind GET /api/admin/dashboard.
+export interface DashboardCounts {
+  total: number;
+  byStatus: { _id: ApplicationStatus; count: number }[];
+  byCourse: { _id: string; courseName: string; count: number }[];
+  byCourseAndStatus: { course: string; courseName: string; status: ApplicationStatus; count: number }[];
 }
 
 export interface ApplicationFilters {
@@ -30,13 +39,13 @@ export class AdminService {
   private api = `${environment.apiUrl}/admin`;
 
   list(filters: ApplicationFilters): Observable<AdminApplication[]> {
-    let params = new HttpParams();
-    for (const [key, value] of Object.entries(filters)) {
-      if (value) params = params.set(key, value);
-    }
     return this.http
-      .get<{ applications: AdminApplication[] }>(`${this.api}/applications`, { params })
+      .get<{ applications: AdminApplication[] }>(`${this.api}/applications`, { params: toParams(filters) })
       .pipe(map((r) => r.applications));
+  }
+
+  dashboard(filters: Pick<ApplicationFilters, 'status' | 'course'>): Observable<DashboardCounts> {
+    return this.http.get<DashboardCounts>(`${this.api}/dashboard`, { params: toParams(filters) });
   }
 
   get(id: string): Observable<ApplicationDetail> {
@@ -61,4 +70,13 @@ export class AdminService {
   documentFile(documentId: string): Observable<Blob> {
     return this.http.get(`${this.api}/documents/${documentId}/file`, { responseType: 'blob' });
   }
+}
+
+// Only non-empty filters go in the query string.
+function toParams(filters: ApplicationFilters): HttpParams {
+  let params = new HttpParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params = params.set(key, value);
+  }
+  return params;
 }
