@@ -5,6 +5,7 @@ const validate = require('../middleware/validate');
 const { ROLES } = require('../config/constants');
 const {
   listQuerySchema,
+  dashboardQuerySchema,
   statusBodySchema,
   entranceScoreBodySchema,
 } = require('../validators/adminSchemas');
@@ -13,6 +14,7 @@ const {
   getApplication,
   updateStatus,
   setEntranceScore,
+  dashboard,
   downloadDocument,
 } = require('../controllers/adminController');
 
@@ -27,5 +29,6 @@ router.get('/applications/:id', getApplication);
 router.patch('/applications/:id/status', validate(statusBodySchema), updateStatus);
 router.patch('/applications/:id/entrance-score', validate(entranceScoreBodySchema), setEntranceScore);
 router.get('/documents/:id/file', downloadDocument);
+router.get('/dashboard', validate(dashboardQuerySchema, 'query'), dashboard);
 
 module.exports = router;

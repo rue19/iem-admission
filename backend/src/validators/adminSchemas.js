@@ -19,6 +19,9 @@ const listQuerySchema = z.object({
   q: z.preprocess(emptyToUndefined, z.string().trim().max(100).optional()),
 });
 
+// GET /api/admin/dashboard?status=&course= (same filters, no search)
+const dashboardQuerySchema = listQuerySchema.pick({ status: true, course: true });
+
 const statusBodySchema = z.object({ status: statusEnum }).strict();
 
 const entranceScoreBodySchema = z
@@ -30,4 +33,4 @@ const entranceScoreBodySchema = z
   })
   .strict();
 
-module.exports = { listQuerySchema, statusBodySchema, entranceScoreBodySchema };
+module.exports = { listQuerySchema, dashboardQuerySchema, statusBodySchema, entranceScoreBodySchema };

@@ -7,6 +7,7 @@ const FeeRecord = require('../models/FeeRecord');
 const User = require('../models/User');
 const { APPLICATION_STATUS, ROLES } = require('../config/constants');
 const { assertTransition, allowedNextStatuses } = require('../services/statusWorkflow');
+const { checkEligibility, calculateMeritScore } = require('../services/eligibility');
 const httpError = require('../utils/httpError');
 
 // Admin-visible applicant fields. passwordHash is excluded by the model anyway;
@@ -73,6 +74,13 @@ async function getApplication(req, res) {
     feeRecord,
     // The UI enables exactly these buttons; the server re-checks on PATCH.
     allowedNextStatuses: allowedNextStatuses(application.status, ROLES.ADMIN),
+    // Worked out on every request, never stored, because it depends on the
+    // fee, which can change separately.
+    eligibility: checkEligibility({
+      qualifyingPercent: application.qualifyingPercent,
+      entranceScore: application.entranceScore,
+      feeStatus: feeRecord?.feeStatus,
+    }),
   });
 }
 
@@ -108,24 +116,93 @@ async function updateStatus(req, res) {
 const SCORABLE = [APPLICATION_STATUS.SUBMITTED, APPLICATION_STATUS.UNDER_REVIEW, APPLICATION_STATUS.WAITLISTED];
 
 // PATCH /api/admin/applications/:id/entrance-score   { entranceScore }
+// The merit score is recalculated and stored at the same time.
 async function setEntranceScore(req, res) {
   assertObjectId(req.params.id, 'application');
+  const { entranceScore } = req.body;
+
+  const existing = await Application.findById(req.params.id);
+  if (!existing) throw httpError(404, 'Application not found');
+
+  // qualifyingPercent and sportsQuota can't change any more (the application
+  // is past Draft), so the merit worked out here stays correct.
+  const meritScore = calculateMeritScore(existing.qualifyingPercent, entranceScore, existing.sportsQuota);
 
   const updated = await Application.findOneAndUpdate(
-    { _id: req.params.id, status: { $in: SCORABLE } },
-    { $set: { entranceScore: req.body.entranceScore } },
+    { _id: existing._id, status: { $in: SCORABLE } },
+    { $set: { entranceScore, meritScore } },
     { returnDocument: 'after', runValidators: true }
   )
     .populate('applicant', APPLICANT_FIELDS)
     .populate('course');
 
   if (!updated) {
-    const existing = await Application.findById(req.params.id);
-    if (!existing) throw httpError(404, 'Application not found');
     throw httpError(409, `Entrance score can't be recorded while the status is ${existing.status}`);
   }
 
   res.json({ application: updated });
+}
+
+// GET /api/admin/dashboard?status=&course= — counts for the admin dashboard.
+//
+// In SQL this would be two GROUP BY queries over a JOIN:
+//   SELECT status, COUNT(*) FROM applications [WHERE ...] GROUP BY status;
+//   SELECT c.courseName, COUNT(*) FROM applications a
+//     JOIN courses c ON c._id = a.course [WHERE ...] GROUP BY c.courseName;
+// In MongoDB the same thing is an aggregation pipeline, run as one query:
+//   $match  = WHERE      (optional filters)
+//   $facet  = run several sub-pipelines over the same matched documents
+//   $group  = GROUP BY   ({ _id: '$status', count: { $sum: 1 } } = COUNT(*))
+//   $lookup = JOIN       (fetch the course name from the courses collection)
+async function dashboard(req, res) {
+  const { status, course } = req.validatedQuery;
+  const match = {};
+  if (status) match.status = status;
+  // Aggregation doesn't cast types the way find() does, so convert the id here.
+  if (course) match.course = new mongoose.Types.ObjectId(course);
+
+  const [result] = await Application.aggregate([
+    { $match: match },
+    {
+      $facet: {
+        total: [{ $count: 'count' }],
+        byStatus: [
+          { $group: { _id: '$status', count: { $sum: 1 } } },
+          { $sort: { count: -1, _id: 1 } },
+        ],
+        byCourse: [
+          { $group: { _id: '$course', count: { $sum: 1 } } },
+          { $lookup: { from: 'courses', localField: '_id', foreignField: '_id', as: 'course' } },
+          { $unwind: { path: '$course', preserveNullAndEmptyArrays: true } },
+          { $project: { _id: 1, count: 1, courseName: { $ifNull: ['$course.courseName', '(deleted course)'] } } },
+          { $sort: { count: -1, courseName: 1 } },
+        ],
+        // Both at once, e.g. "B.Tech CSE / Submitted: 4", for a table view.
+        byCourseAndStatus: [
+          { $group: { _id: { course: '$course', status: '$status' }, count: { $sum: 1 } } },
+          { $lookup: { from: 'courses', localField: '_id.course', foreignField: '_id', as: 'course' } },
+          { $unwind: { path: '$course', preserveNullAndEmptyArrays: true } },
+          {
+            $project: {
+              _id: 0,
+              course: '$_id.course',
+              status: '$_id.status',
+              count: 1,
+              courseName: { $ifNull: ['$course.courseName', '(deleted course)'] },
+            },
+          },
+          { $sort: { courseName: 1, status: 1 } },
+        ],
+      },
+    },
+  ]);
+
+  res.json({
+    total: result.total[0]?.count ?? 0,
+    byStatus: result.byStatus,
+    byCourse: result.byCourse,
+    byCourseAndStatus: result.byCourseAndStatus,
+  });
 }
 
 // GET /api/admin/documents/:id/file — lets the admin open an uploaded file.
@@ -150,4 +227,11 @@ async function downloadDocument(req, res) {
   res.sendFile(fileName, { root: env.uploadDir });
 }
 
-module.exports = { listApplications, getApplication, updateStatus, setEntranceScore, downloadDocument };
+module.exports = {
+  listApplications,
+  getApplication,
+  updateStatus,
+  setEntranceScore,
+  dashboard,
+  downloadDocument,
+};
