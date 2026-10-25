@@ -15,6 +15,11 @@ function errorHandler(err, req, res, next) {
     return res.status(400).json({ error: 'Request body is not valid JSON' });
   }
 
+  // JSON body over the 100 KB limit set in app.js.
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Request body is too large' });
+  }
+
   // MongoDB unique index violation (e.g. two registrations with the same email
   // arriving at the same moment).
   if (err.code === 11000) {

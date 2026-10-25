@@ -14,6 +14,9 @@ const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+// Don't advertise the framework ("X-Powered-By: Express") to anyone probing the API.
+app.disable('x-powered-by');
+
 // Only the Angular app's origin may call the API from a browser.
 app.use(cors({ origin: env.clientOrigin }));
 
