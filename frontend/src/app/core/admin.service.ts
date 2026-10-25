@@ -65,7 +65,12 @@ export class AdminService {
       .pipe(map((r) => r.application));
   }
 
-  // Fetched through HttpClient (not a plain link) so the interceptor can add
+  // Vercel deployment: a 5-minute signed link straight to Vercel Blob.
+  documentLink(documentId: string): Observable<{ url: string; expiresAt: string }> {
+    return this.http.get<{ url: string; expiresAt: string }>(`${this.api}/documents/${documentId}/link`);
+  }
+
+  // Local (disk) storage: fetched through HttpClient (not a plain link) so the interceptor can add
   // the token; the file comes back as a Blob.
   documentFile(documentId: string): Observable<Blob> {
     return this.http.get(`${this.api}/documents/${documentId}/file`, { responseType: 'blob' });

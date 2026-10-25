@@ -3,6 +3,7 @@ import { Component, computed, inject, OnInit, signal } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AdminApplication, AdminService, ApplicationDetail, DashboardCounts } from '../../core/admin.service';
 import { ApplicationService } from '../../core/application.service';
+import { ConfigService } from '../../core/config.service';
 import { requiredDocumentsValid } from '../../core/document.service';
 import { APPLICATION_STATUSES, ApplicationStatus, Course, UploadedDocument } from '../../core/models';
 import { apiErrorMessage } from '../../shared/api-error';
@@ -20,6 +21,7 @@ const SCORABLE: ApplicationStatus[] = ['Submitted', 'Under Review', 'Waitlisted'
 export class AdminReview implements OnInit {
   private admin = inject(AdminService);
   private applications = inject(ApplicationService);
+  private config = inject(ConfigService);
   private fb = inject(NonNullableFormBuilder);
 
   protected readonly statuses = APPLICATION_STATUSES;
@@ -170,18 +172,32 @@ export class AdminReview implements OnInit {
 
   viewDocument(doc: UploadedDocument): void {
     // Open the tab now, inside the click, so pop-up blockers allow it; fill it
-    // once the file has arrived.
+    // once the file (or its signed link) has arrived.
     const tab = window.open('', '_blank');
-    this.admin.documentFile(doc._id).subscribe({
-      next: (blob) => {
-        const url = URL.createObjectURL(blob);
-        if (tab) tab.location.href = url;
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      },
-      error: (err) => {
-        tab?.close();
-        this.actionError.set(apiErrorMessage(err));
-      },
+    const fail = (err: unknown) => {
+      tab?.close();
+      this.actionError.set(apiErrorMessage(err));
+    };
+
+    this.config.config$.subscribe(({ uploadMode }) => {
+      if (uploadMode === 'blob') {
+        // Vercel: the file goes from Blob straight to the browser.
+        this.admin.documentLink(doc._id).subscribe({
+          next: ({ url }) => {
+            if (tab) tab.location.href = url;
+          },
+          error: fail,
+        });
+        return;
+      }
+      this.admin.documentFile(doc._id).subscribe({
+        next: (blob) => {
+          const url = URL.createObjectURL(blob);
+          if (tab) tab.location.href = url;
+          setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        },
+        error: fail,
+      });
     });
   }
 
