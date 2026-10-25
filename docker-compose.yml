@@ -1,0 +1,13 @@
+# Optional: local MongoDB for development. Run `docker compose up -d`.
+# Skip this if you use MongoDB Atlas or a locally installed mongod.
+services:
+  mongo:
+    # 8.2+ required: 8.0 refuses to start on Linux kernel 6.19+ (SERVER-121912)
+    image: mongo:8.2
+    container_name: iem-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - iem-mongo-data:/data/db
+volumes:
+  iem-mongo-data:
