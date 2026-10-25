@@ -12,6 +12,8 @@ const {
   getMyApplication,
   updateMyApplication,
 } = require('../controllers/applicationController');
+const { uploadDocument, listMyDocuments } = require('../controllers/documentController');
+const { uploadSingleFile } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -22,5 +24,10 @@ router.use(verifyToken, requireRole(ROLES.APPLICANT));
 router.post('/', validate(createApplicationSchema), createApplication);
 router.get('/me', getMyApplication);
 router.put('/me', validate(updateApplicationSchema), updateMyApplication);
+
+// multer runs only AFTER the token and role checks above, so an anonymous
+// client can't make the server write files to disk.
+router.post('/me/documents', uploadSingleFile, uploadDocument);
+router.get('/me/documents', listMyDocuments);
 
 module.exports = router;
