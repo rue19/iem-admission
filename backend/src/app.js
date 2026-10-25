@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const env = require('./config/env');
 const healthRoutes = require('./routes/health');
+const configRoutes = require('./routes/config');
 const authRoutes = require('./routes/auth');
 const courseRoutes = require('./routes/courses');
 const applicationRoutes = require('./routes/applications');
@@ -25,6 +26,7 @@ app.use(cors({ origin: env.clientOrigin }));
 app.use(express.json({ limit: '100kb' }));
 
 app.use('/api/health', healthRoutes);
+app.use('/api/config', configRoutes);
 // Public: register/login. verifyToken is applied per-route inside (only /me).
 app.use('/api/auth', authRoutes);
 // Protected: each router applies verifyToken (and requireRole) itself.

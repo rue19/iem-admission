@@ -8,6 +8,7 @@ const User = require('../models/User');
 const { APPLICATION_STATUS, ROLES } = require('../config/constants');
 const { assertTransition, allowedNextStatuses } = require('../services/statusWorkflow');
 const { checkEligibility, calculateMeritScore } = require('../services/eligibility');
+const storage = require('../services/storage');
 const httpError = require('../utils/httpError');
 
 // Admin-visible applicant fields. passwordHash is excluded by the model anyway;
@@ -217,6 +218,10 @@ async function downloadDocument(req, res) {
     throw httpError(404, 'This upload was rejected, so no file is stored');
   }
 
+  if (storage.isBlobReference(document.filePath)) {
+    throw httpError(409, 'This file is stored in Vercel Blob; use the /link route to open it');
+  }
+
   // sendFile with `root` refuses any path that escapes the upload folder.
   const fileName = path.basename(document.filePath);
   res.type(document.mimeType);
@@ -227,7 +232,26 @@ async function downloadDocument(req, res) {
   res.sendFile(fileName, { root: env.uploadDir });
 }
 
+// GET /api/admin/documents/:id/link — blob driver: a 5-minute signed URL the
+// admin's browser opens directly. Files never pass through the API, because a
+// Vercel function can't send a response over 4.5 MB.
+async function documentLink(req, res) {
+  assertObjectId(req.params.id, 'document');
+  const document = await Document.findById(req.params.id);
+  if (!document) {
+    throw httpError(404, 'Document not found');
+  }
+  if (!document.filePath) {
+    throw httpError(404, 'This upload was rejected, so no file is stored');
+  }
+  if (!storage.isBlobReference(document.filePath)) {
+    throw httpError(409, 'This file is stored on disk; use the /file route to open it');
+  }
+  res.json(await storage.signedDownloadUrl(storage.blobPathname(document.filePath)));
+}
+
 module.exports = {
+  documentLink,
   listApplications,
   getApplication,
   updateStatus,

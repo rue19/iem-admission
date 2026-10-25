@@ -16,6 +16,7 @@ const {
   setEntranceScore,
   dashboard,
   downloadDocument,
+  documentLink,
 } = require('../controllers/adminController');
 
 const router = express.Router();
@@ -29,6 +30,7 @@ router.get('/applications/:id', getApplication);
 router.patch('/applications/:id/status', validate(statusBodySchema), updateStatus);
 router.patch('/applications/:id/entrance-score', validate(entranceScoreBodySchema), setEntranceScore);
 router.get('/documents/:id/file', downloadDocument);
+router.get('/documents/:id/link', documentLink);
 router.get('/dashboard', validate(dashboardQuerySchema, 'query'), dashboard);
 
 module.exports = router;
