@@ -1,0 +1,171 @@
+<div class="page-head">
+  <h1>Administrator Review</h1>
+</div>
+
+<form class="card filters" [formGroup]="filters" (ngSubmit)="search()">
+  <input formControlName="q" placeholder="Search by Application ID, name or email" aria-label="Search" />
+  <select formControlName="status" aria-label="Status filter">
+    <option value="">All statuses</option>
+    @for (s of statuses; track s) {
+      <option [value]="s">{{ s }}</option>
+    }
+  </select>
+  <select formControlName="course" aria-label="Course filter">
+    <option value="">All courses</option>
+    @for (c of courses(); track c._id) {
+      <option [value]="c._id">{{ c.courseName }}</option>
+    }
+  </select>
+  <button type="submit" class="btn-primary">Search</button>
+  <button type="button" class="btn-secondary" (click)="clearFilters()">Clear</button>
+</form>
+
+<div class="grid">
+  <section class="card results">
+    <h2>Applications <span class="muted">({{ results().length }})</span></h2>
+    @if (listLoading()) {
+      <p class="muted">Loading…</p>
+    } @else if (listError()) {
+      <p class="alert">{{ listError() }}</p>
+    } @else if (!results().length) {
+      <p class="muted">No applications match these filters.</p>
+    } @else {
+      <ul>
+        @for (a of results(); track a._id) {
+          <li>
+            <button type="button" class="row" [class.selected]="detail()?.application?._id === a._id" (click)="select(a._id)">
+              <span class="row-main">
+                <strong>{{ a.applicant.name }}</strong>
+                <span class="muted">{{ a.course.courseName }}</span>
+                <span class="mono muted">{{ a._id }}</span>
+              </span>
+              <app-status-badge [status]="a.status" />
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+
+  <div class="detail">
+    @if (detailLoading()) {
+      <p class="card muted">Loading application…</p>
+    } @else if (detail(); as d) {
+      @if (actionError()) {
+        <p class="alert">{{ actionError() }}</p>
+      }
+      @if (actionMessage()) {
+        <p class="notice">{{ actionMessage() }}</p>
+      }
+
+      <section class="card">
+        <div class="card-head">
+          <h2>Application information</h2>
+          <app-status-badge [status]="d.application.status" />
+        </div>
+        <dl class="info">
+          <dt>Application ID</dt><dd class="mono">{{ d.application._id }}</dd>
+          <dt>Name</dt><dd>{{ d.application.applicant.name }}</dd>
+          <dt>Email</dt><dd>{{ d.application.applicant.email }}</dd>
+          <dt>Contact</dt><dd>{{ d.application.applicant.contactNumber || '—' }}</dd>
+          <dt>Course</dt><dd>{{ d.application.course.courseName }}</dd>
+          <dt>Qualifying %</dt><dd>{{ d.application.qualifyingPercent }}</dd>
+          <dt>Sports quota</dt><dd>{{ d.application.sportsQuota ? 'Yes' : 'No' }}</dd>
+          <dt>Applied on</dt><dd>{{ d.application.applicationDate | date: 'mediumDate' }}</dd>
+          <dt>Entrance score</dt><dd>{{ d.application.entranceScore ?? 'Not recorded' }}</dd>
+          <dt>Fee</dt>
+          <dd>{{ d.feeRecord ? d.feeRecord.feeStatus + (d.feeRecord.transactionRef ? ' · ' + d.feeRecord.transactionRef : '') : 'Not due (not submitted)' }}</dd>
+        </dl>
+      </section>
+
+      <section class="card">
+        <h2>Verification</h2>
+        <ul class="docs">
+          @for (doc of d.documents; track doc._id) {
+            <li>
+              <span>
+                <strong>{{ doc.documentType }}</strong>
+                <span class="muted">{{ doc.originalName }}</span>
+                @if (doc.validationStatus === 'Invalid') {
+                  <span class="field-error">{{ doc.validationMessage }}</span>
+                }
+              </span>
+              <span class="doc-actions">
+                <span class="doc-status" [class.valid]="doc.validationStatus === 'Valid'">{{ doc.validationStatus }}</span>
+                @if (doc.validationStatus === 'Valid') {
+                  <button type="button" class="btn-link" (click)="viewDocument(doc)">View</button>
+                }
+              </span>
+            </li>
+          } @empty {
+            <li class="muted">No documents uploaded.</li>
+          }
+        </ul>
+        <ul class="checks">
+          <li [class.done]="docsValid()">Required documents valid</li>
+          <li>
+            <label class="checkbox">
+              <input type="checkbox" [checked]="infoVerified()" (change)="infoVerified.set($any($event.target).checked)" />
+              Information verified
+            </label>
+          </li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h2>Entrance score</h2>
+        @if (canScore()) {
+          <form class="score" [formGroup]="scoreForm" (ngSubmit)="saveScore()">
+            <input type="number" min="0" max="100" step="0.5" formControlName="entranceScore" aria-label="Entrance score out of 100" />
+            <span class="muted">/ 100</span>
+            <button type="submit" class="btn-secondary" [disabled]="saving()">Save score</button>
+          </form>
+          @if (scoreForm.controls.entranceScore.touched && scoreForm.controls.entranceScore.invalid) {
+            <small class="field-error">Enter a score between 0 and 100</small>
+          }
+        } @else {
+          <p class="muted">Scores can be recorded only while the application is Submitted, Under Review or Waitlisted.</p>
+        }
+      </section>
+
+      <section class="card">
+        <h2>Decision</h2>
+        <!-- Only moves the SERVER listed in allowedNextStatuses are enabled. -->
+        <div class="decision">
+          <button type="button" class="btn-approve" [disabled]="!canApprove() || !infoVerified() || saving()" (click)="changeStatus('Approved')">
+            Approve
+          </button>
+          <button type="button" class="btn-reject" [disabled]="!canReject() || saving()" (click)="changeStatus('Rejected')">
+            Reject
+          </button>
+        </div>
+        @if (canApprove() && !infoVerified()) {
+          <p class="muted">Tick “Information verified” to enable Approve.</p>
+        }
+
+        <div class="update">
+          <select [value]="nextStatus()" (change)="nextStatus.set($any($event.target).value)" [disabled]="!otherMoves().length" aria-label="New status">
+            <option value="">{{ otherMoves().length ? 'Choose new status' : 'No other moves available' }}</option>
+            @for (s of otherMoves(); track s) {
+              <option [value]="s">{{ s }}</option>
+            }
+          </select>
+          <button type="button" class="btn-secondary" [disabled]="!nextStatus() || saving()" (click)="changeStatus(nextStatus())">
+            Update Status
+          </button>
+        </div>
+        @if (!d.allowedNextStatuses.length) {
+          <p class="muted">
+            @if (d.application.status === 'Draft') {
+              The applicant hasn't submitted yet.
+            } @else {
+              {{ d.application.status }} is a final decision.
+            }
+          </p>
+        }
+      </section>
+    } @else {
+      <p class="card muted">Select an application to review it.</p>
+    }
+  </div>
+</div>
