@@ -10,6 +10,7 @@ line of the code.
 - [Phase 3 — Document upload and validation](#phase-3--document-upload-and-validation)
 - [Phase 4 — Submission, fees and the status workflow](#phase-4--submission-fees-and-the-status-workflow)
 - [Phase 5 — Admin review](#phase-5--admin-review)
+- [Phase 6 — Dashboard, eligibility and merit](#phase-6--dashboard-eligibility-and-merit)
 - [Test index](#test-index)
 - [Problems hit and how they were solved](#problems-hit-and-how-they-were-solved)
 
@@ -249,13 +250,49 @@ but only along the workflow. The applicant then sees the new status.
 | `core/models.ts` | Gained `APPLICATION_STATUSES` for the filter dropdown. |
 | `pages/admin-review/*` | Built to match the wireframe. **Filters:** search (ID, name or email), status and course, plus Clear. **Results list** with status badges. **Application information** card: ID, applicant, course, %, sports quota, date, entrance score, fee and reference. **Verification:** each document with Valid/Invalid and the server's reason, **View** for valid files, "Required documents valid" (computed) and an "Information verified" tick. **Entrance score:** shown only while it can be recorded. **Decision:** Approve / Reject enabled from `allowedNextStatuses`, plus **Update Status** with a dropdown of the other legal moves (Under Review, Waitlisted). After any change, both the detail and its row in the list update. **View** opens the new tab inside the click so pop-up blockers allow it, then fills it with the file. |
 
-The aggregation dashboard counts (by course and status) arrive in Phase 6.
+
+---
+
+## Phase 6 — Dashboard, eligibility and merit
+
+**Goal:** the admin sees counts by status and by course, worked out by
+MongoDB in one aggregation. Each application gets a merit score and an
+eligibility verdict from pure, fully tested functions.
+
+### The aggregation, compared with SQL
+```
+SQL                                              MongoDB pipeline stage
+-----------------------------------------------  --------------------------------------------
+WHERE status = ? AND course = ?                  { $match: { status, course } }   (optional)
+SELECT status, COUNT(*) ... GROUP BY status      { $group: { _id: '$status', count: { $sum: 1 } } }
+JOIN courses c ON c._id = a.course               { $lookup: { from: 'courses', localField: '_id',
+                                                              foreignField: '_id', as: 'course' } }
+ORDER BY count DESC                              { $sort: { count: -1 } }
+(several GROUP BY queries in one round trip)     { $facet: { total, byStatus, byCourse, byCourseAndStatus } }
+```
+`$facet` runs several sub-pipelines over the **same** matched documents, so one
+database round trip returns the total, the by-status counts, the by-course
+counts (with names) and the course × status table.
+
+### Back end
+| File | What it does and why |
+|---|---|
+| `src/services/eligibility.js` | **`checkEligibility({ qualifyingPercent, entranceScore, feeStatus })`** returns `{ eligible, message }`. The cut-offs are inclusive (exactly 60 and exactly 50 pass). When several conditions fail, one message is reported, in a fixed order: fee → score missing → entrance → qualifying. The spec's three messages are used word for word. "Entrance score not recorded" was added because the spec's table assumes a score exists, and a missing score shouldn't be reported as "below the cutoff". **`calculateMeritScore(q, e, sportsQuota)`** is the spec's pseudocode line by line, plus rounding to 2 decimals: `77.7*0.4 + 66.6*0.6` is `71.03999999999999` in binary floating point. |
+| `src/controllers/adminController.js` | **dashboard:** the pipeline above. `$match` needs a real `ObjectId` for `course`, because aggregation doesn't cast strings the way `find()` does. A deleted course is labelled `(deleted course)`, so its applications aren't silently dropped from the counts. **setEntranceScore:** now also calculates `meritScore` and stores it in the same atomic update. That is safe because qualifying % and sports quota are frozen once an application is past Draft. **getApplication:** now includes `eligibility`, worked out on each request, never stored, because the fee can change separately. |
+| `src/validators/adminSchemas.js` | `dashboardQuerySchema` takes `status` and `course` only, reusing the list's rules. |
+| `src/routes/admin.js` | `GET /api/admin/dashboard`. |
+
+### Front end
+| File | What it does and why |
+|---|---|
+| `core/admin.service.ts` | `dashboard(filters)` and the `DashboardCounts` type. `ApplicationDetail` gained `eligibility`. A shared `toParams()` sends only non-empty filters. |
+| `pages/admin-review/*` | A **Dashboard** block at the top: the total, plus "By status" and "By course" rows, each with a count and a bar showing its share of the total. It follows the status and course filters, and refreshes after every status change. The detail card now shows the **merit score** and the server's **eligibility** message (green if eligible, amber otherwise). Saving a score re-fetches the detail, so the new verdict appears, while keeping the reviewer's "Information verified" tick. |
 
 ---
 
 ## Test index
 
-`npm test` in `backend/` runs 260 tests in 8 suites.
+`npm test` in `backend/` runs 302 tests in 10 suites.
 
 | ID | What it proves |
 |---|---|
@@ -358,6 +395,24 @@ The aggregation dashboard counts (by course and status) arrive in Phase 6.
 | ADM-20..23 | Entrance score: 0, 50, 72.5 and 100 are recorded; above 100, below 0, a string, null, missing or extra fields → 400; Draft, Approved or Rejected → 409; unknown → 404 |
 | ADM-30..32 | Admin opens a valid file (type, `nosniff`, filename header, real bytes); a rejected upload → 404; an applicant → 403 |
 
+| **Eligibility and merit unit tests** | `tests/eligibility.test.js` |
+| ELIG-1..8 | **The full 8-row decision table** (Qualifying % ≥ 60 / Entrance ≥ 50 / Fee Paid). Only row 1 (all yes) is eligible; whenever the fee is unpaid the message is "fee payment pending"; otherwise entrance is reported before qualifying |
+| ELIG-9 | The messages match the spec word for word |
+| ELIG-10..14 | Boundaries: exactly 60 and 50 pass; 59.99 and 49.99 fail; no fee record counts as unpaid; a missing score is "incomplete" |
+| MERIT-01 | (70, 40, false) → **0** (below the cutoff) |
+| MERIT-02 | (70, 70, false) → **70.0** |
+| MERIT-03 | (70, 70, true) → **75.0** |
+| MERIT-04 | (95, 100, true) → **100** (103 capped) |
+| MERIT-05..08 | No sports bonus below the cutoff; exactly 50 is scored (54); 100 is unchanged by the cap; float noise rounded (71.04) |
+| **Dashboard integration tests** | `tests/dashboard.test.js` |
+| DASH-01..03 | Counts by status, by course (names via `$lookup`), and by course × status |
+| DASH-04..05 | Optional `$match` on status, and on course (ObjectId) |
+| DASH-06 | No matches → zeros, not an error |
+| DASH-07 | A deleted course is labelled, not dropped |
+| DASH-08 | Invalid filters → 400 |
+| MERIT-INT-01..06 | Recording an entrance score stores the right merit (the four spec cases); re-scoring recalculates; a refused score leaves the merit untouched |
+| ELIG-INT-01..04 | The admin detail returns the right verdict: no fee, no score, eligible, below minimum |
+
 ---
 
 ## Problems hit and how they were solved
@@ -378,3 +433,8 @@ The aggregation dashboard counts (by course and status) arrive in Phase 6.
    make an over-limit file look like it is within 5 MB, because the smallest
    over-limit size, 5,242,881 bytes, is 5.00000095 MB, which rounds to
    5.000001.
+5. **Don't trust a floating-point example without running it.** The first
+   draft claimed `70*0.4 + 70*0.6` gives `70.00000000000001`. Node actually
+   gives exactly `70`. The comment and test now use a real case,
+   `77.7*0.4 + 66.6*0.6 = 71.03999999999999`, which shows why the merit
+   score is rounded.

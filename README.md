@@ -12,7 +12,7 @@ Angular form ──HTTP/JSON──▶ Express route (on Node) ──▶ Mongoose
      └──────────── Angular updates the page ◀── JSON response ◀────────┘
 ```
 
-> **Status: Phase 5 of 7 complete.** The full cycle works: register → apply → upload → submit → admin review → decision → applicant sees the new status.
+> **Status: Phase 6 of 7 complete.** The full cycle works: register → apply → upload → submit → admin review → decision → applicant sees the new status.
 > See [Roadmap](#roadmap) and [`docs/DEVELOPMENT_LOG.md`](docs/DEVELOPMENT_LOG.md)
 > for what each phase added and why every file exists.
 
@@ -121,7 +121,7 @@ npm start                # UI on http://localhost:4200
 4. Click **Upload Documents**. Upload a PDF, JPG or PNG for Identity Proof and Academic Certificate; each slot shows **Valid**, or the server's reason it was rejected (wrong type, empty, over 5 MB, corrupted). Try an MP3 or a file over 5 MB to see the rejection messages.
 5. Once both required documents are **Valid**, click **Submit Application**. You get your Application ID, the status becomes **Submitted**, and an application fee of ₹1,000 appears on the dashboard as **Pending**. Click **Pay fee (mock)** to mark it **Paid** (no real payment is taken).
 6. Log out and log in as the seeded admin (`ADMIN_EMAIL` / `ADMIN_PASSWORD`). You land on `/admin`. Search for the applicant by name, email or Application ID, or filter by status and course. Select the application to see its details, documents (**View** opens the file) and fee.
-7. Move it to **Under Review** with **Update Status**, record an **entrance score**, tick **Information verified**, then **Approve** (or **Reject** / **Waitlisted**). Only the moves the server allows are enabled.
+7. The **Dashboard** block at the top shows counts by status and by course (it follows the status/course filters). Move the application to **Under Review** with **Update Status**, record an **entrance score** (the merit score and eligibility verdict update), tick **Information verified**, then **Approve** (or **Reject** / **Waitlisted**). Only the moves the server allows are enabled.
 8. Log back in as the applicant and click **Track Status**: the badge shows the new status.
 9. While logged in as an applicant, typing `/admin` in the address bar sends you back to `/dashboard`.
 
@@ -159,11 +159,11 @@ All responses are JSON. Errors always have the shape `{ "error": "message" }`
 | `GET /api/fees/me` | applicant | My fee record (404 before submitting) | 4 ✅ |
 | `POST /api/fees/me/pay` | applicant | **Mock** payment: Pending → Paid with a `MOCK-…` reference. No body is read; paying twice → 409 | 4 ✅ |
 | `GET /api/admin/applications?status=&course=&q=` | admin | List, filter by status and/or course, and search `q` by Application ID, name or email (case-insensitive, regex characters treated literally) | 5 ✅ |
-| `GET /api/admin/applications/:id` | admin | `{ application, documents, feeRecord, allowedNextStatuses }` | 5 ✅ |
+| `GET /api/admin/applications/:id` | admin | `{ application, documents, feeRecord, allowedNextStatuses, eligibility }` | 5 ✅ |
 | `PATCH /api/admin/applications/:id/status` | admin | `{ status }`, checked against the workflow; illegal → 409, unknown status → 400 | 5 ✅ |
-| `PATCH /api/admin/applications/:id/entrance-score` | admin | `{ entranceScore }` (0–100), only while Submitted, Under Review or Waitlisted; otherwise 409 | 5 ✅ |
+| `PATCH /api/admin/applications/:id/entrance-score` | admin | `{ entranceScore }` (0–100), only while Submitted, Under Review or Waitlisted; otherwise 409. Also recalculates and stores `meritScore` | 5 ✅ |
 | `GET /api/admin/documents/:id/file` | admin | Opens an uploaded file (404 for rejected uploads, which have no file) | 5 ✅ |
-| `GET /api/admin/dashboard` | admin | Counts by course and status (aggregation) | 6 |
+| `GET /api/admin/dashboard?status=&course=` | admin | Aggregation: `{ total, byStatus, byCourse, byCourseAndStatus }`, with optional `$match` filters | 6 ✅ |
 
 ### Status codes used
 | Code | Meaning here |
@@ -215,6 +215,26 @@ Approved or Rejected, is refused with **409**. The applicant can't write
 `status` at all: the update endpoint rejects the field, and submit ignores
 its body.
 
+### Eligibility and merit
+Defined in `backend/src/services/eligibility.js` as pure functions.
+
+**Eligible** only if all three hold: qualifying % ≥ 60, entrance score ≥ 50
+(out of 100), and fee **Paid**. If more than one fails, a single message is
+reported, in this order:
+
+| Order | Condition | Message |
+|---|---|---|
+| 1 | Fee not paid | `Application incomplete: fee payment pending` |
+| 2 | Entrance score not recorded | `Application incomplete: entrance score not recorded` |
+| 3 | Entrance score < 50 | `Not eligible: entrance score below qualifying cutoff.` |
+| 4 | Qualifying % < 60 | `Not eligible: qualifying percentage below minimum requirement.` |
+
+**Merit score:** 0 if the entrance score is below 50. Otherwise it is
+`qualifying% × 0.4 + entrance × 0.6`, plus 5 for sports quota, capped at 100
+and rounded to 2 decimals. It is stored when the admin records the entrance
+score. Eligibility is worked out on each request instead of being stored,
+because it depends on the fee, which changes separately.
+
 ## Project structure
 
 ```
@@ -234,7 +254,7 @@ iem-admission/
 │   │   ├── middleware/          auth (verifyToken), requireRole, validate, upload (multer), errorHandler
 │   │   ├── controllers/         request handlers
 │   │   ├── routes/              URL → middleware → controller wiring
-│   │   ├── services/            business rules: documentValidation (Rule DU), statusWorkflow, submissionGate
+│   │   ├── services/            business rules: documentValidation (Rule DU), statusWorkflow, submissionGate, eligibility
 │   │   └── utils/httpError.js
 │   ├── tests/                   Jest + supertest suites and helpers
 │   └── uploads/                 uploaded files (git-ignored)
@@ -265,7 +285,7 @@ iem-admission/
 | 3 | Document upload (multer, validation service, disk cleanup); upload page; file-size tests | ✅ |
 | 4 | Submission gating, fee record, mock payment, status workflow service | ✅ |
 | 5 | Admin list/filter/review, status transitions, entrance score; admin review page | ✅ |
-| 6 | Aggregation dashboard; eligibility and merit functions | ⏳ |
+| 6 | Aggregation dashboard; eligibility and merit functions | ✅ |
 | 7 | Security/integration test pass, final docs, demo cheat-sheet | ⏳ |
 
 **Out of scope:** real payment gateway, SMS/OTP, email (including password
