@@ -10,7 +10,8 @@
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand --coverage"
   },
   "author": "",
   "license": "ISC",
@@ -37,6 +38,14 @@
     ],
     "testMatch": [
       "<rootDir>/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/server.js"
+    ],
+    "coverageReporters": [
+      "text-summary",
+      "text"
     ]
   },
   "engines": {
