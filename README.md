@@ -240,18 +240,34 @@ Two Vercel limits shaped the code:
 2. **Create the Vercel project:** import the repository at vercel.com/new, or
    run `vercel link` in the repo root. Keep the root directory as the repo
    root; `vercel.json` sets the install, build and output settings.
-3. **Add a database:** in the project's **Storage** tab, add **MongoDB Atlas**
-   from the Marketplace (it sets `MONGODB_URI`). Or create a free Atlas
-   cluster yourself, allow access from `0.0.0.0/0`, and add `MONGO_URI`.
-4. **Add file storage:** in **Storage**, create a **Blob** store and connect it
-   to the project (it sets `BLOB_READ_WRITE_TOKEN`).
+3. **Create the database on MongoDB Atlas** (Vercel's Marketplace has no
+   MongoDB option, so this happens on mongodb.com):
+   1. Create a free **M0** cluster. Pick AWS **Mumbai (ap-south-1)**, the same
+      region as the function (`regions` in `vercel.json`).
+   2. **Database Access:** add a user with a password and the "Read and write
+      to any database" role.
+   3. **Network Access:** allow `0.0.0.0/0`, because Vercel functions don't
+      have fixed IP addresses.
+   4. **Connect → Drivers:** copy the `mongodb+srv://...` string, put in the
+      password, and add the database name before the `?`
+      (`...mongodb.net/iem_admission?...`).
+   5. Add it to Vercel: `vercel env add MONGO_URI production`.
+4. **Add file storage:** create a **private** Blob store in the same region
+   and connect it to the project. Vercel sets `BLOB_READ_WRITE_TOKEN`:
+   ```bash
+   vercel blob create-store iem-admission-documents --access private --region bom1 --yes
+   ```
 5. **Set environment variables** (Settings → Environment Variables):
 
    | Variable | Value |
    |---|---|
    | `STORAGE_DRIVER` | `blob` |
    | `JWT_SECRET` | a new long random value, not your local one |
-   | `NODE_ENV` | `production` |
+
+   Don't set `NODE_ENV` yourself. Vercel uses these variables during the
+   build too, and with `NODE_ENV=production`, `npm ci` skips devDependencies,
+   including the Angular CLI, so the build fails. Vercel already runs the
+   function with `NODE_ENV=production`.
 
 6. **Deploy:** push to `main` (with the Git integration) or run
    `vercel --prod`.
