@@ -21,5 +21,18 @@ module.exports = async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     return res.end(JSON.stringify({ error: 'Database unavailable, please try again shortly' }));
   }
+  req.url = withoutRewriteParam(req.url);
+  // Vercel also sets its own req.query (with "path" in it) on the request,
+  // which hides Express's; removing it lets Express parse the cleaned URL.
+  delete req.query;
   return app(req, res);
 };
+
+// The "/api/:path*" rewrite in vercel.json makes Vercel append the matched part
+// as ?path=..., which the strict query validators would reject as unknown.
+function withoutRewriteParam(url) {
+  const parsed = new URL(url, 'http://localhost');
+  if (!parsed.searchParams.has('path')) return url;
+  parsed.searchParams.delete('path');
+  return parsed.pathname + parsed.search;
+}

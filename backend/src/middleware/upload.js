@@ -15,7 +15,11 @@ if (env.storageDriver === 'disk') {
 }
 
 const storage = multer.diskStorage({
-  destination: env.uploadDir,
+  // A function, not a string: given a string, multer creates the folder itself
+  // as soon as this file loads, which crashes on Vercel even in blob mode.
+  destination(req, file, cb) {
+    cb(null, env.uploadDir);
+  },
   // A random name on disk, never the user's file name. A name like
   // "../../server.js" can't escape the upload folder or overwrite anything,
   // and two users uploading "marksheet.pdf" can't collide.
