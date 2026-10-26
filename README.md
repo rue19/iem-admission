@@ -10,6 +10,9 @@ It is a proof of concept: a deliberately small slice of a real admissions
 portal, built so that one full request-response loop works end to end and
 every rule is enforced on the server.
 
+**Live demo:** https://iem-admission-five.vercel.app (register as an applicant
+to try it; the admin account is not public).
+
 ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)
 ![Express 5](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
 ![Angular 22](https://img.shields.io/badge/Angular-22-DD0031?logo=angular&logoColor=white)
@@ -207,6 +210,10 @@ The whole system runs on Vercel as one project: Angular as static files, the
 Express API as one serverless function, uploads in Vercel Blob, and the
 database on MongoDB Atlas.
 
+It is live at **https://iem-admission-five.vercel.app** (Vercel region `bom1`,
+Atlas M0 cluster in AWS Mumbai). `GET /api/health` there reports
+`"db":"connected"` when everything is wired up.
+
 | Part | On Vercel | Configured by |
 |---|---|---|
 | Angular app | Static files from `frontend/dist/frontend/browser` | [`vercel.json`](vercel.json) `buildCommand`, `outputDirectory` |
@@ -233,6 +240,15 @@ Two Vercel limits shaped the code:
   then readability. Admins open files through 5-minute signed links
   (`GET /api/admin/documents/:id/link`), so files never pass through a
   function either.
+
+Two smaller differences from running the API with `node`, both handled in code:
+- **Read-only filesystem.** Nothing may create `uploads/` at startup, so the
+  multer disk storage takes its folder from a function, which multer does not
+  create on load ([`upload.js`](backend/src/middleware/upload.js)).
+- **The rewrite adds `?path=...`.** `"/api/:path*"` makes Vercel append the
+  matched part to the query string, and the admin list and dashboard refuse
+  unknown query parameters. [`api/index.js`](api/index.js) removes it before
+  Express sees the request.
 
 ### Steps
 
